@@ -8,8 +8,7 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 
 SAVE_PATH = "./models"
-
-GAMES = {"space_invaders": "ALE/SpaceInvaders-v5"}
+GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -37,7 +36,7 @@ def model_v0(input_shape, n_actions):
 
 
 def save(model, name):
-    model.save(f'{SAVE_PATH}/{name}')
+    model.save(f"{SAVE_PATH}/{name}")
 
 
 def load(name: str):
@@ -103,5 +102,4 @@ def test(name: str):
 
 
 if __name__ == "__main__":
-
-    test("space_invaders")
+    test("breakout")
