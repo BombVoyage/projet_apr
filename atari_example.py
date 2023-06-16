@@ -82,7 +82,7 @@ while True:  # Run until solved
     episode_reward = 0
 
     for timestep in range(1, max_steps_per_episode):
-        # env.render(); Adding this line would show the attempts
+        env.render() #Adding this line would show the attempts
         # of the agent in a pop up window.
         frame_count += 1
 
