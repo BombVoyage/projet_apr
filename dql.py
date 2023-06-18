@@ -84,14 +84,14 @@ def train(name: str):
     save(model, name)
 
 
-def test(name: str):
+def test(name: str, version: int):
     def quit(env, sig, frame):
         env.close()
         sys.exit(0)
 
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human")
     env.seed(seed)
-    model = load(name)
+    model = load(f'{name}_v{version}')
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
     while True:
         observation, _ = env.reset()
@@ -102,4 +102,4 @@ def test(name: str):
 
 
 if __name__ == "__main__":
-    test("breakout")
+    test("breakout", 2)
