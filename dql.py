@@ -50,9 +50,13 @@ def load(name: str):
     return tf.keras.models.load_model(f"{SAVE_PATH}/{name}")
 
 
-def train(name: str, version: int = 2):
-    env = gym.make(GAMES[name], obs_type="rgb")
+def train(name: str, version: int = 2, render: bool = False):
+    def quit(env, sig, frame):
+        env.close()
+        sys.exit(0)
+    env = gym.make(GAMES[name], obs_type="rgb", render_mode='human' if render else None)
     env.seed(seed)
+    signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     gamma = 0.9  # Discount factor for past rewards
     epsilon = 1.0  # Epsilon greedy parameter
@@ -61,10 +65,10 @@ def train(name: str, version: int = 2):
 
     n_actions = int(env.action_space.n)
     space_shape = env.observation_space.shape
-    model, ver = make_model(space_shape, n_actions, version)
+    model = make_model(space_shape, n_actions, version)
 
     observation, info = env.reset(seed=seed)
-    for _ in tqdm(MAX_FRAMES):
+    for _ in tqdm(range(MAX_FRAMES)):
         q_values = model(np.array([observation]))[0].numpy()
 
         e = np.random.rand()
