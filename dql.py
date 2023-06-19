@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
+MAX_FRAMES = 10000000
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -49,38 +50,37 @@ def train(name: str):
 
     gamma = 0.9  # Discount factor for past rewards
     epsilon = 1.0  # Epsilon greedy parameter
-    epsilon_decay = 0.9
-    max_steps_per_episode = 1000
-    max_episodes = 50
+    exploration_frames = MAX_FRAMES/10
+    epsilon_decay = 0.9/exploration_frames
 
     n_actions = int(env.action_space.n)
     space_shape = env.observation_space.shape
     model = model_v0(space_shape, n_actions)
 
-    for _ in tqdm(range(max_episodes)):
-        observation, info = env.reset(seed=seed)
-        for _ in range(max_steps_per_episode):
-            q_values = model(np.array([observation]))[0].numpy()
+    observation, info = env.reset(seed=seed)
+    for _ in tqdm(MAX_FRAMES):
+        q_values = model(np.array([observation]))[0].numpy()
 
-            e = np.random.rand()
-            if e <= epsilon:
-                # Select random action
-                action = np.random.randint(n_actions)
-            else:
-                # Select action with highest q-value
-                action = np.argmax(q_values)
+        e = np.random.rand()
+        if e <= epsilon:
+            # Select random action
+            action = np.random.randint(n_actions)
+        else:
+            # Select action with highest q-value
+            action = np.argmax(q_values)
 
-            next_observation, reward, terminated, truncated, info = env.step(action)
-            next_q_values = model(np.array([next_observation]))[0].numpy()
+        next_observation, reward, terminated, truncated, info = env.step(action)
+        if terminated:
+            observation, info = env.reset(seed=seed)
+            continue
+        next_q_values = model(np.array([next_observation]))[0].numpy()
 
-            update_q_values = q_values
-            update_q_values[action] = 1 / (1 + reward) + gamma * np.max(next_q_values)
+        update_q_values = q_values
+        update_q_values[action] = 1 / (1 + reward) + gamma * np.max(next_q_values)
 
-            model.fit(np.array([observation]), np.array([update_q_values]))
+        model.fit(np.array([observation]), np.array([update_q_values]))
 
-            if terminated:
-                break
-        epsilon *= epsilon_decay
+        epsilon -= epsilon_decay
     save(model, name)
 
 
@@ -102,4 +102,4 @@ def test(name: str, version: int):
 
 
 if __name__ == "__main__":
-    test("breakout", 2)
+    test("space_invaders", 1)
