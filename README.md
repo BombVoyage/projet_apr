@@ -1,1 +1,2 @@
-# projet_apr
+# Projet APR
+## AI for Space Invaders - Atari Game
