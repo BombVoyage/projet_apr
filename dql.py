@@ -94,7 +94,7 @@ def train(name: str, version: int = 2, render: bool = False):
         next_q_values = model(np.array([next_observation]))[0].numpy()
 
         update_q_values = q_values
-        update_q_values[action] = 1 / (1 + reward) + gamma * np.max(next_q_values)
+        update_q_values[action] = reward + gamma * np.max(next_q_values)
 
         model.fit(np.array([observation]), np.array([update_q_values]))
 
