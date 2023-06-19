@@ -43,7 +43,7 @@ def make_model(input_shape, n_actions, version=2):
 
 
 def save(model, name, version):
-    model.save(f"{SAVE_PATH}/{name}_v{version}")
+    model.save(f"{SAVE_PATH}/{name}_v{version}", include_optimizer=False)
 
 
 def load(name: str):
