@@ -1,5 +1,6 @@
 import signal
 import sys
+import cv2
 import gymnasium as gym
 import numpy as np
 import tensorflow as tf
@@ -50,11 +51,18 @@ def load(name: str):
     return tf.keras.models.load_model(f"{SAVE_PATH}/{name}")
 
 
+def downscale(img, factor):
+    x_size = len(img[0])
+    y_size = len(img)
+    return cv2.resize(img, dsize=(x_size // factor, y_size // factor))
+
+
 def train(name: str, version: int = 2, render: bool = False):
     def quit(env, sig, frame):
         env.close()
         sys.exit(0)
-    env = gym.make(GAMES[name], obs_type="rgb", render_mode='human' if render else None)
+
+    env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env.seed(seed)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
