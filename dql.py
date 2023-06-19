@@ -54,7 +54,7 @@ def load(name: str):
 def downscale(img, factor):
     x_size = len(img[0])
     y_size = len(img)
-    return cv2.resize(img, dsize=(x_size // factor, y_size // factor))
+    return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
 
 
 def train(name: str, version: int = 2, render: bool = False):
