@@ -15,47 +15,53 @@ MAX_FRAMES = 10000000
 seed = 42
 
 
-def model_v0(input_shape, n_actions):
+def make_model(input_shape, n_actions, version=2):
     # Network defined by the Deepmind paper
     inputs = layers.Input(shape=input_shape)
 
-    # Convolutions on the frames on the screen
-    layer1 = layers.Conv2D(16, 9, strides=4, activation="relu")(inputs)
-    layer2 = layers.Conv2D(16, 5, strides=2, activation="relu")(layer1)
-    layer3 = layers.Conv2D(16, 3, strides=1, activation="relu")(layer2)
+    match version:
+        case 1:
+            layer1 = layers.Conv2D(16, 9, strides=4, activation="relu")(inputs)
+            layer2 = layers.Conv2D(16, 5, strides=2, activation="relu")(layer1)
+            layer3 = layers.Conv2D(16, 3, strides=1, activation="relu")(layer2)
+            layer4 = layers.Flatten()(layer3)
+            layer5 = layers.Dense(512, activation="relu")(layer4)
+            action = layers.Dense(n_actions, activation="linear")(layer5)
 
-    layer4 = layers.Flatten()(layer3)
+        case 2:
+            layer1 = layers.Conv2D(16, 8, strides=4, activation="relu")(inputs)
+            layer2 = layers.Conv2D(32, 4, strides=2, activation="relu")(layer1)
+            layer3 = layers.Flatten()(layer2)
+            layer4 = layers.Dense(256, activation="relu")(layer3)
+            action = layers.Dense(n_actions, activation="linear")(layer4)
 
-    layer5 = layers.Dense(512, activation="relu")(layer4)
-    action = layers.Dense(n_actions, activation="linear")(layer5)
     model = keras.Model(inputs=inputs, outputs=action)
-
     model.compile(
         keras.optimizers.Adam(learning_rate=0.01), keras.losses.MeanSquaredError()
     )
     return model
 
 
-def save(model, name):
-    model.save(f"{SAVE_PATH}/{name}")
+def save(model, name, version):
+    model.save(f"{SAVE_PATH}/{name}_v{version}")
 
 
 def load(name: str):
     return tf.keras.models.load_model(f"{SAVE_PATH}/{name}")
 
 
-def train(name: str):
+def train(name: str, version: int = 2):
     env = gym.make(GAMES[name], obs_type="rgb")
     env.seed(seed)
 
     gamma = 0.9  # Discount factor for past rewards
     epsilon = 1.0  # Epsilon greedy parameter
-    exploration_frames = MAX_FRAMES/10
-    epsilon_decay = 0.9/exploration_frames
+    exploration_frames = MAX_FRAMES / 10
+    epsilon_decay = 0.9 / exploration_frames
 
     n_actions = int(env.action_space.n)
     space_shape = env.observation_space.shape
-    model = model_v0(space_shape, n_actions)
+    model, ver = make_model(space_shape, n_actions, version)
 
     observation, info = env.reset(seed=seed)
     for _ in tqdm(MAX_FRAMES):
@@ -91,7 +97,7 @@ def test(name: str, version: int):
 
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human")
     env.seed(seed)
-    model = load(f'{name}_v{version}')
+    model = load(f"{name}_v{version}")
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
     while True:
         observation, _ = env.reset()
