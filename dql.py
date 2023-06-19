@@ -91,7 +91,7 @@ def train(name: str, version: int = 2, render: bool = False):
         model.fit(np.array([observation]), np.array([update_q_values]))
 
         epsilon -= epsilon_decay
-    save(model, name)
+    save(model, name, version)
 
 
 def test(name: str, version: int):
