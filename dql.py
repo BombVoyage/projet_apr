@@ -9,7 +9,8 @@ from tqdm import tqdm
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 10000000
+MAX_FRAMES = 20000
+MAX_BUFFER = 25
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -49,6 +50,11 @@ def save(model, name, version):
 def load(name: str):
     return tf.keras.models.load_model(f"{SAVE_PATH}/{name}")
 
+def calc_reward_mean(hisory_buffer, center = 13, dist = 8):
+    res = 0
+    for i in range(center-dist, center+dist+1):
+        res += hisory_buffer[i][2]
+    return res/(2*dist+1)
 
 def train(name: str, version: int = 2, render: bool = False):
     def quit(env, sig, frame):
@@ -67,12 +73,15 @@ def train(name: str, version: int = 2, render: bool = False):
     space_shape = env.observation_space.shape
     model = make_model(space_shape, n_actions, version)
 
+    history_buffer = []
+    nb_buffer = 0
+
     observation, info = env.reset(seed=seed)
     for _ in tqdm(range(MAX_FRAMES)):
         q_values = model(np.array([observation]))[0].numpy()
 
         e = np.random.rand()
-        if e <= epsilon:
+        if e <= epsilon or nb_buffer<=MAX_BUFFER:
             # Select random action
             action = np.random.randint(n_actions)
         else:
@@ -80,19 +89,29 @@ def train(name: str, version: int = 2, render: bool = False):
             action = np.argmax(q_values)
 
         next_observation, reward, terminated, truncated, info = env.step(action)
+
+        # Append history_beffer with new observation
+        history_buffer.append( (observation, action, reward) )
+        nb_buffer += 1
+
         if terminated:
             observation, info = env.reset(seed=seed)
             continue
-        next_q_values = model(np.array([next_observation]))[0].numpy()
 
-        update_q_values = q_values
-        update_q_values[action] = 1 / (1 + reward) + gamma * np.max(next_q_values)
+        #next_q_values = model(np.array([next_observation]))[0].numpy()
+        # Maximum MAX_BEFFER elements in the buffer
+        if nb_buffer>MAX_BUFFER:
+            observation_temp, action_temp, _ = history_buffer.pop(0)
+            next_q_values = model(np.array([observation]))[0].numpy()
+            reward_temp = calc_reward_mean(history_buffer, 13, 8)
+            nb_buffer -= 1
+            update_q_values = q_values
+            update_q_values[action_temp] = reward_temp + gamma * np.max(next_q_values)
 
-        model.fit(np.array([observation]), np.array([update_q_values]))
+            model.fit(np.array([observation_temp]), np.array([update_q_values]))
 
-        epsilon -= epsilon_decay
-    save(model, name, version)
-
+            epsilon -= epsilon_decay
+    save(model, name, version=version)
 
 def test(name: str, version: int):
     def quit(env, sig, frame):
@@ -112,4 +131,5 @@ def test(name: str, version: int):
 
 
 if __name__ == "__main__":
-    test("space_invaders", 1)
+    test("space_invaders", 2)
+    #train("space_invaders")
