@@ -6,11 +6,13 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 from tqdm import tqdm
+from collections import deque
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
 MAX_FRAMES = 20000
 MAX_BUFFER = 25
+NB_FRAME = 4
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -18,7 +20,7 @@ seed = 42
 
 def make_model(input_shape, n_actions, version=2):
     # Network defined by the Deepmind paper
-    inputs = layers.Input(shape=input_shape)
+    inputs = layers.Input(shape=(NB_FRAME, *input_shape))
 
     match version:
         case 1:
@@ -74,12 +76,18 @@ def train(name: str, version: int = 2, render: bool = False):
     model = make_model(space_shape, n_actions, version)
 
     history_buffer = []
+    frames_observation = deque(maxlen=NB_FRAME)
     nb_buffer = 0
 
     observation, info = env.reset(seed=seed)
-    for _ in tqdm(range(MAX_FRAMES)):
-        q_values = model(np.array([observation]))[0].numpy()
+    frames_observation.append(observation)
+    for k in range(NB_FRAME-1):
+        action = np.random.randint(n_actions)
+        next_observation, reward, terminated, truncated, info = env.step(action)
+        frames_observation.append(next_observation)
 
+    for i in tqdm(range(MAX_FRAMES)):
+        q_values = model(np.array([list(frames_observation)]))[0].numpy()
         e = np.random.rand()
         if e <= epsilon or nb_buffer<=MAX_BUFFER:
             # Select random action
@@ -89,28 +97,36 @@ def train(name: str, version: int = 2, render: bool = False):
             action = np.argmax(q_values)
 
         next_observation, reward, terminated, truncated, info = env.step(action)
+        frames_observation.append(next_observation)
+
 
         # Append history_beffer with new observation
-        history_buffer.append( (observation, action, reward) )
+        history_buffer.append( (frames_observation.copy(), action, reward) )
         nb_buffer += 1
 
         if terminated:
             observation, info = env.reset(seed=seed)
+            frames_observation.append(next_observation)
             continue
 
         #next_q_values = model(np.array([next_observation]))[0].numpy()
         # Maximum MAX_BEFFER elements in the buffer
         if nb_buffer>MAX_BUFFER:
             observation_temp, action_temp, _ = history_buffer.pop(0)
-            next_q_values = model(np.array([observation]))[0].numpy()
+            #####
+            next_q_values = model(np.array([list(frames_observation)]))[0].numpy()
             reward_temp = calc_reward_mean(history_buffer, 13, 8)
             nb_buffer -= 1
             update_q_values = q_values
             update_q_values[action_temp] = reward_temp + gamma * np.max(next_q_values)
 
-            model.fit(np.array([observation_temp]), np.array([update_q_values]))
+            model.fit(np.array([observation_temp]), np.array([update_q_values]), verbose=0)
 
             epsilon -= epsilon_decay
+
+        if not i%5000:
+            save(model, name, version=version)
+            print("model saved")
     save(model, name, version=version)
 
 def test(name: str, version: int):
@@ -122,14 +138,25 @@ def test(name: str, version: int):
     env.seed(seed)
     model = load(f"{name}_v{version}")
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
+
+    frames_observation = deque(maxlen=NB_FRAME)
+
+    n_actions = int(env.action_space.n)
+
     while True:
         observation, _ = env.reset()
+        frames_observation.append(observation)
         terminated = False
         while not terminated:
-            action = np.argmax(model(np.array([observation])))
+            if frames_observation.maxlen == len(frames_observation):
+                action = np.argmax(model(np.array([list(frames_observation)])))
+            else:
+                action = np.random.randint(n_actions)
             observation, reward, terminated, truncated, info = env.step(action)
+            frames_observation.append(observation)
 
 
 if __name__ == "__main__":
-    test("space_invaders", 2)
-    #train("space_invaders")
+    
+    #test("breakout", 2)
+    train("breakout")
