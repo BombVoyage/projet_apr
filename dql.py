@@ -15,20 +15,12 @@ from dataclasses import dataclass, astuple
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 10000      # total training frames
-MAX_BUFFER = 500        # size of replay buffer
+MAX_FRAMES = 10000  # total training frames
+MAX_BUFFER = 500  # size of replay buffer
+STEPS_TO_UPDATE = 1000  # steps between target updates
 
 # Configuration paramaters for the whole setup
 seed = 42
-
-
-@dataclass
-class Transition:
-    state: np.ndarray
-    action: int
-    reward: int
-    next_state: np.ndarray
-    terminated: bool
 
 
 @dataclass
@@ -76,7 +68,7 @@ def save_stats(stats: Stats, name, version):
 
 
 def plot_stats(name: str, version: int):
-    df = pd.read_csv(f'./models/{name}_v{version}/stats.csv')
+    df = pd.read_csv(f"./models/{name}_v{version}/stats.csv")
     fig, ax = plt.subplots(2)
     ax[0].plot(df.episode, df.score)
     ax[1].plot(df.episode, df.steps_survived)
@@ -108,15 +100,17 @@ def train(name: str, version: int = 2, render: bool = False):
     epsilon = 1.0  # Epsilon greedy parameter
     exploration_frames = MAX_FRAMES / 10
     epsilon_decay = 0.9 / exploration_frames
-    replay_buffer = deque(maxlen=MAX_BUFFER)
-    batch_size = 8
+    batch_size = 4
     steps_to_update = 4
     step_count = 0
+    replay_buffer = deque(maxlen=MAX_BUFFER)
 
     # Initialising the model
     n_actions = int(env.action_space.n)
     space_shape = downscale(observation, 2).shape
-    model = make_model(space_shape, n_actions, version)
+    target = make_model(space_shape, n_actions, version)
+    policy = make_model(space_shape, n_actions, version)
+    steps_to_synchronize = 200
 
     # Variables to perform analysis
     stats = Stats(np.array([0]), np.array([0]), np.array([0]))
@@ -125,7 +119,7 @@ def train(name: str, version: int = 2, render: bool = False):
 
     for _ in tqdm(range(MAX_FRAMES)):
         step_count += 1
-        q_values = model(np.array([downscale(observation, 2)]))[0].numpy()
+        q_values = policy(np.array([downscale(observation, 2)]))[0].numpy()
 
         e = np.random.rand()
         if e <= epsilon:
@@ -140,7 +134,7 @@ def train(name: str, version: int = 2, render: bool = False):
         steps_survived += 1
         # Save to replay buffer
         replay_buffer.append(
-            Transition(observation, action, reward, next_observation, terminated)
+            (observation, action, reward, next_observation, terminated)
         )
 
         if terminated:
@@ -153,30 +147,35 @@ def train(name: str, version: int = 2, render: bool = False):
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
-            step_count = 0
-            for transition in np.random.choice(
-                replay_buffer, batch_size, replace=False
-            ):
-                (
-                    t_observation,
-                    t_action,
-                    t_reward,
-                    t_next_observation,
-                    t_terminated,
-                ) = astuple(transition)
-                if t_terminated:
-                    update_q_values = t_reward
-                else:
-                    next_q_values = model(np.array([downscale(t_next_observation, 2)]))[
-                        0
-                    ].numpy()
-                    update_q_values = reward + gamma * np.max(next_q_values)
-                model.fit(
-                    np.array([downscale(observation, 2)]), np.array([update_q_values]), verbose=False
+            transitions = np.array(
+                [
+                    replay_buffer[i]
+                    for i in np.random.choice(
+                        len(replay_buffer), batch_size, replace=False
+                    )
+                ]
+            )
+            (observations, actions, rewards, next_observations, is_terminated) = tuple(
+                [np.array(transitions[:, i]) for i in range(len(transitions[0]))]
+            )
+            observations = np.array([downscale(obs, 2) for obs in observations])
+            next_observations = np.array(
+                [downscale(next_obs, 2) for next_obs in next_observations]
+            )
+            update_q_values = target(observations).numpy()
+            next_q_values = np.max(target(next_observations).numpy(), axis=1)
+            is_terminated = [1 if t else 0 for t in is_terminated]
+            for i in range(len(update_q_values)):
+                update_q_values[i, actions[i]] = (
+                    rewards[i] + is_terminated[i] * next_q_values[i] * gamma
                 )
+            target.fit(observations, np.array(update_q_values))
+
+        if step_count % steps_to_synchronize == 0:
+            policy.set_weights(target.get_weights())
 
         epsilon -= epsilon_decay
-    save(model, name, version)
+    save(policy, name, version)
     save_stats(stats, name, version)
 
 
@@ -198,8 +197,8 @@ def test(name: str, version: int):
 
 if __name__ == "__main__":
     # plot_stats("space_invaders", 1)
-    # train("space_invaders", 1)
-    test("space_invaders", 1)
+    # train("space_invaders", 2)
+    test("space_invaders", 2)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
     # env.seed(42)
