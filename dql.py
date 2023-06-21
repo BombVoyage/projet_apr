@@ -5,6 +5,7 @@ import csv
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+import random
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -102,22 +103,25 @@ def preprocess(img, downscale_factor: float = 2):
         res = res.reshape((*res.shape, 1))
         return res
     else:
-        preprocessed = []
-        for frame in img:
-            preprocessed.append(preprocess(frame))
-        return np.array(preprocessed)
+        return np.array([preprocess(frame) for frame in img])
 
 
 def train_batch(policy, target, buffer, batch_size, gamma):
     """Trains a single batch of experiences from the buffer."""
-    transitions = np.array(
-        [buffer[i] for i in np.random.choice(len(buffer), batch_size, replace=False)],
-        dtype=object,
+    batch = random.sample(list(buffer), batch_size)
+    frames = np.array([b[0] for b in batch])
+    actions = np.array([b[1] for b in batch])
+    rewards = np.array([b[2] for b in batch])
+    next_observations = np.array([b[3] for b in batch])
+    is_terminated = np.array([b[4] for b in batch])
+
+    next_frames = np.array(
+        [
+            np.concatenate((frames[i][1:], np.array([next_observations[i]])))
+            for i in range(batch_size)
+        ]
     )
-    (frames, actions, rewards, next_frames, is_terminated) = tuple(
-        [np.array(transitions[:, i]) for i in range(len(transitions[0]))]
-    )
-    next_q_values = target(preprocess(next_frames, 2)).numpy()
+    next_q_values = target(next_frames).numpy()
     max_next_q_values = np.max(next_q_values, axis=1)
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
@@ -125,7 +129,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     loss_fn = keras.losses.Huber()
     mask = tf.one_hot(actions, len(next_q_values[0]))
     with tf.GradientTape() as tape:
-        raw_q_values = policy(preprocess(frames, 2))
+        raw_q_values = policy(frames)
         q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
         loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
     grads = tape.gradient(loss, policy.trainable_variables)
@@ -139,24 +143,26 @@ def synchronize_model(policy, target):
 
 def epsilon_greedy(policy, state, epsilon: float) -> int:
     """Returns best action following an epsilon-greedy policy."""
-    q_values = policy(preprocess(np.array(state), 2)).numpy()
+    q_values = policy(state).numpy()
     e = np.random.rand()
     if e <= epsilon:
         # Select random action
-        action = np.random.randint(len(q_values))
+        action = np.random.randint(len(q_values[0]))
     else:
         # Select action with highest q-value
         action = np.argmax(q_values)
     return action
 
 
-def init_stacked_frames(observation: np.ndarray, max_frames):
+def init_stacked_frames(observation: np.ndarray, max_frames, to_process: bool = True):
     """Create the initial stacked frames."""
     frames = deque(maxlen=max_frames)
     for _ in range(max_frames):
-        frames.append(observation)
-    next_frames = deepcopy(frames)
-    return frames, next_frames
+        if to_process:
+            frames.append(preprocess(observation))
+        else:
+            frames.append(observation)
+    return frames
 
 
 def visualize(frames):
@@ -216,17 +222,17 @@ def train(
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env.seed(seed)
     observation, info = env.reset(seed=seed)
-    frames, next_frames = init_stacked_frames(observation, stacked_frames)
+    frames = init_stacked_frames(observation, stacked_frames)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
-    epsilon_decay = 0.9 / exploration_time * max_frames
+    epsilon_decay = 0.9 / (exploration_time * max_frames)
     step_count = 0
     replay_buffer = deque(maxlen=max_buffer)
 
     # Initialising the model
     n_actions = int(env.action_space.n)
-    target = make_model(preprocess(np.array(frames), 2), n_actions, version)
+    target = make_model(np.array(frames), n_actions, version)
     policy = deepcopy(target)
 
     # Variables to perform analysis
@@ -240,14 +246,13 @@ def train(
         step_count += 1
         steps_survived += 1
 
-        action = epsilon_greedy(policy, [frames], epsilon)
+        action = epsilon_greedy(policy, np.array([frames], dtype="float32"), epsilon)
         next_observation, reward, terminated, truncated, info = env.step(action)
         running_reward += reward
-        next_frames.append(next_observation)
         replay_buffer.append(
-            (np.array(frames), action, reward, np.array(next_frames), terminated)
+            (np.array(frames), action, reward, preprocess(next_observation), terminated)
         )
-        frames.append(next_observation)
+        frames.append(preprocess(next_observation))
 
         if terminated:
             stats.append(episode, running_reward, steps_survived)
@@ -255,7 +260,7 @@ def train(
             steps_survived = 0
             episode += 1
             observation, info = env.reset(seed=seed)
-            frames, next_frames = init_stacked_frames(observation, stacked_frames)
+            frames = init_stacked_frames(observation, stacked_frames)
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
