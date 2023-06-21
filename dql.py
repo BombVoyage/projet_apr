@@ -20,6 +20,7 @@ GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"
 MAX_FRAMES = 50000  # total training frames
 MAX_BUFFER = 5000  # size of replay buffer
 STEPS_TO_UPDATE = 1000  # steps between target updates
+STACKED_FRAMES = 4  # number of frames to consider as observations
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -34,7 +35,7 @@ class Stats:
 
 def make_model(input_shape, n_actions, version=2):
     # Network defined by the Deepmind paper
-    inputs = layers.Input(shape=input_shape)
+    inputs = layers.Input(shape=(STACKED_FRAMES, *input_shape))
 
     match version:
         case 1:
@@ -82,8 +83,17 @@ def load(name: str):
 
 
 def downscale(img: np.ndarray, factor: float) -> np.ndarray:
-    y_size, x_size, _ = img.shape
-    return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+    if len(img.shape) == 3:
+        y_size, x_size, _ = img.shape
+        return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+    else:
+        downscaled = []
+        y_size, x_size, _ = img[0].shape
+        for frame in img:
+            downscaled.append(
+                cv2.resize(frame, dsize=(int(x_size // factor), int(y_size // factor)))
+            )
+        return np.array(downscaled)
 
 
 def train(name: str, version: int = 2, render: bool = False):
@@ -106,6 +116,10 @@ def train(name: str, version: int = 2, render: bool = False):
     steps_to_update = 4
     step_count = 0
     replay_buffer = deque(maxlen=MAX_BUFFER)
+    frames = deque(maxlen=STACKED_FRAMES)
+    for _ in range(STACKED_FRAMES):
+        frames.append(observation)
+    next_frames = deepcopy(frames)
 
     # Initialising the model
     n_actions = int(env.action_space.n)
@@ -121,7 +135,7 @@ def train(name: str, version: int = 2, render: bool = False):
 
     for _ in tqdm(range(MAX_FRAMES)):
         step_count += 1
-        q_values = policy(np.array([downscale(observation, 2)]))[0].numpy()
+        q_values = policy(np.array([downscale(np.array(frames), 2)]))[0].numpy()
 
         e = np.random.rand()
         if e <= epsilon:
@@ -134,10 +148,12 @@ def train(name: str, version: int = 2, render: bool = False):
         next_observation, reward, terminated, truncated, info = env.step(action)
         running_reward += reward
         steps_survived += 1
+        next_frames.append(next_observation)
         # Save to replay buffer
         replay_buffer.append(
-            (observation, action, reward, next_observation, terminated)
+            (np.array(frames), action, reward, np.array(next_frames), terminated)
         )
+        frames.append(next_observation)
 
         if terminated:
             stats.episode = np.append(stats.episode, stats.episode[-1] + 1)
@@ -157,21 +173,21 @@ def train(name: str, version: int = 2, render: bool = False):
                     )
                 ]
             )
-            (observations, actions, rewards, next_observations, is_terminated) = tuple(
+            (batch_frames, actions, rewards, next_batch_frames, is_terminated) = tuple(
                 [np.array(transitions[:, i]) for i in range(len(transitions[0]))]
             )
-            observations = np.array([downscale(obs, 2) for obs in observations])
-            next_observations = np.array(
-                [downscale(next_obs, 2) for next_obs in next_observations]
+            batch_frames = np.array([downscale(f, 2) for f in batch_frames])
+            next_batch_frames = np.array(
+                [downscale(next_f, 2) for next_f in next_batch_frames]
             )
-            max_next_q_values = np.max(target(next_observations).numpy(), axis=1)
+            max_next_q_values = np.max(target(next_batch_frames).numpy(), axis=1)
             target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
             optimizer = keras.optimizers.Adam(learning_rate=0.001)
             loss_fn = keras.losses.Huber()
             mask = tf.one_hot(actions, n_actions)
             with tf.GradientTape() as tape:
-                raw_q_values = policy(observations)
+                raw_q_values = policy(batch_frames)
                 q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
                 loss = tf.reduce_mean(
                     loss_fn(target_q_values.astype("float32"), q_values)
@@ -225,9 +241,9 @@ def compare(
 
 
 if __name__ == "__main__":
-    compare(25, "space_invaders", 1)
+    # compare(25, "space_invaders", 1)
     # plot_stats("space_invaders", 2)
-    # train("space_invaders", 2, render="human")
+    train("space_invaders", 2, render=False)
     # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
