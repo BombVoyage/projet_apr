@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from skimage import color
 from tqdm import tqdm
 from collections import deque
 from dataclasses import dataclass
@@ -83,17 +84,24 @@ def load(name: str):
 
 
 def downscale(img: np.ndarray, factor: float) -> np.ndarray:
+    y_size, x_size = img.shape[0], img.shape[1]
+    return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+
+
+def grayscale(img: np.ndarray):
+    return color.rgb2gray(img)
+
+
+def preprocess(img, downscale_factor: float = 2):
     if len(img.shape) == 3:
-        y_size, x_size, _ = img.shape
-        return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+        res = downscale(grayscale(img), downscale_factor)
+        res = res.reshape((*res.shape, 1))
+        return res
     else:
-        downscaled = []
-        y_size, x_size, _ = img[0].shape
+        preprocessed = []
         for frame in img:
-            downscaled.append(
-                cv2.resize(frame, dsize=(int(x_size // factor), int(y_size // factor)))
-            )
-        return np.array(downscaled)
+            preprocessed.append(preprocess(frame))
+        return np.array(preprocessed)
 
 
 def train_batch(policy, target, buffer, batch_size, gamma):
@@ -105,9 +113,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     (frames, actions, rewards, next_frames, is_terminated) = tuple(
         [np.array(transitions[:, i]) for i in range(len(transitions[0]))]
     )
-    frames = np.array([downscale(f, 2) for f in frames])
-    next_frames = np.array([downscale(next_f, 2) for next_f in next_frames])
-    next_q_values = target(next_frames).numpy()
+    next_q_values = target(preprocess(next_frames, 2)).numpy()
     max_next_q_values = np.max(next_q_values, axis=1)
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
@@ -115,7 +121,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     loss_fn = keras.losses.Huber()
     mask = tf.one_hot(actions, len(next_q_values[0]))
     with tf.GradientTape() as tape:
-        raw_q_values = policy(frames)
+        raw_q_values = policy(preprocess(frames, 2))
         q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
         loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
     grads = tape.gradient(loss, policy.trainable_variables)
@@ -129,7 +135,7 @@ def synchronize_model(policy, target):
 
 def epsilon_greedy(policy, state, epsilon: float) -> int:
     """Returns best action following an epsilon-greedy policy."""
-    q_values = policy(np.array([downscale(np.array(state), 2)]))[0].numpy()
+    q_values = policy(preprocess(np.array(state), 2)).numpy()
     e = np.random.rand()
     if e <= epsilon:
         # Select random action
@@ -155,7 +161,7 @@ def visualize(frames):
         ax[0][j].imshow(frames[j])
         ax[0][j].axis("off")
     for j in range(n_frames):
-        ax[1][j].imshow(downscale(frames[j], 2))
+        ax[1][j].imshow(preprocess(frames[j], 2), cmap="gray")
         ax[1][j].axis("off")
     plt.savefig("./current_frame.png")
 
@@ -212,9 +218,7 @@ def train(
 
     # Initialising the model
     n_actions = int(env.action_space.n)
-    target = make_model(
-        np.array([downscale(np.array(frames), 2)])[0], n_actions, version
-    )
+    target = make_model(preprocess(np.array(frames), 2), n_actions, version)
     policy = deepcopy(target)
 
     # Variables to perform analysis
@@ -228,7 +232,7 @@ def train(
         step_count += 1
         steps_survived += 1
 
-        action = epsilon_greedy(policy, frames, epsilon)
+        action = epsilon_greedy(policy, [frames], epsilon)
         next_observation, reward, terminated, truncated, info = env.step(action)
         running_reward += reward
         next_frames.append(next_observation)
@@ -277,7 +281,7 @@ def test(name: str, version: Optional[int] = None, episodes: int = -1, render=Tr
         terminated = False
         while not terminated:
             if model is not None:
-                action = np.argmax(model(np.array([downscale(observation, 2)])))
+                action = np.argmax(model(preprocess(observation, 2)))
             else:
                 action = np.random.randint(env.action_space.n)
             observation, reward, terminated, truncated, info = env.step(action)
@@ -301,7 +305,7 @@ def compare(
 if __name__ == "__main__":
     # compare(25, "space_invaders", 1)
     # plot_stats("space_invaders", 2)
-    train("space_invaders", 2, render=False)
+    train("space_invaders", 2, render=False, debug=False)
     # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
