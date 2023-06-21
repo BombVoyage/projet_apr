@@ -151,6 +151,7 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
 
 
 def init_stacked_frames(observation: np.ndarray, max_frames):
+    """Create the initial stacked frames."""
     frames = deque(maxlen=max_frames)
     for _ in range(max_frames):
         frames.append(observation)
@@ -159,6 +160,7 @@ def init_stacked_frames(observation: np.ndarray, max_frames):
 
 
 def visualize(frames):
+    """Save a visualization of the current frames given to the model."""
     n_frames = len(frames)
     fig, ax = plt.subplots(2, n_frames, figsize=(15, 15))
     for j in range(n_frames):
