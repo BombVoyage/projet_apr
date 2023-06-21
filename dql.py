@@ -17,10 +17,6 @@ from typing import Optional, List
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 50000  # total training frames
-MAX_BUFFER = 5000  # size of replay buffer
-STEPS_TO_UPDATE = 1000  # steps between target updates
-STACKED_FRAMES = 4  # number of frames to consider as observations
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -38,9 +34,9 @@ class Stats:
         self.steps_survived.append(steps)
 
 
-def make_model(input_shape, n_actions, version=2):
+def make_model(sample_input: np.ndarray, n_actions, version=2):
     # Network defined by the Deepmind paper
-    inputs = layers.Input(shape=(STACKED_FRAMES, *input_shape))
+    inputs = layers.Input(shape=sample_input.shape)
 
     match version:
         case 1:
@@ -59,7 +55,6 @@ def make_model(input_shape, n_actions, version=2):
             action = layers.Dense(n_actions, activation="linear")(layer4)
 
     model = keras.Model(inputs=inputs, outputs=action)
-    model.compile(keras.optimizers.Adam(learning_rate=0.001), keras.losses.Huber())
     return model
 
 
@@ -154,11 +149,12 @@ def init_stacked_frames(observation: np.ndarray, max_frames):
 
 
 def visualize(frames):
-    fig, ax = plt.subplots(2, STACKED_FRAMES, figsize=(15, 15))
-    for j in range(STACKED_FRAMES):
+    n_frames = len(frames)
+    fig, ax = plt.subplots(2, n_frames, figsize=(15, 15))
+    for j in range(n_frames):
         ax[0][j].imshow(frames[j])
         ax[0][j].axis("off")
-    for j in range(STACKED_FRAMES):
+    for j in range(n_frames):
         ax[1][j].imshow(downscale(frames[j], 2))
         ax[1][j].axis("off")
     plt.savefig("./current_frame.png")
@@ -168,26 +164,34 @@ def train(
     name: str,
     version: int = 2,
     render: bool = False,
+    max_frames: int = 50000,
+    max_buffer: int = 5000,
+    stacked_frames: int = 4,
     gamma: float = 0.9,
     epsilon: float = 1.0,
-    exploration_frames: int = MAX_FRAMES / 10,
+    exploration_time: int = 1 / 10,
     batch_size: int = 32,
     steps_to_update: int = 4,
+    steps_to_synchronize=200,
     debug: bool = False,
 ):
     """
     Trains the model.
 
     Arguments:
-        name: Name of the game.
-        version: Model version.
-        render: Whether to render training or not.
-        gamma: Discount factor.
-        epsilon: Epsilon greedy parameter.
-        exploration_frames: Number of frames to reach minimum epsilon.
-        batch_size: Size of experience replay batch.
-        steps_to_update: Number of steps between batch training.
-        debug: Visual debugging.
+        name -- Name of the game.
+        version -- Model version.
+        render -- Whether to render training or not.
+        max_frames -- Maximum training frames.
+        max_buffer -- Maximum buffer size for experience replay.
+        stacked_frames -- Number of frames constituting a single state.
+        gamma -- Discount factor.
+        epsilon -- Epsilon greedy parameter.
+        exploration_time -- Fraction of max frames before minimum epsilon is reached.
+        batch_size -- Size of experience replay batch.
+        steps_to_update -- Number of steps between batch training.
+        steps_to_synchronize -- Number of steps between model synchronization.
+        debug -- Visual debugging.
     """
 
     def quit(env, sig, frame):
@@ -198,20 +202,20 @@ def train(
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env.seed(seed)
     observation, info = env.reset(seed=seed)
-    frames, next_frames = init_stacked_frames(observation, STACKED_FRAMES)
+    frames, next_frames = init_stacked_frames(observation, stacked_frames)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
-    epsilon_decay = 0.9 / exploration_frames
+    epsilon_decay = 0.9 / exploration_time * max_frames
     step_count = 0
-    replay_buffer = deque(maxlen=MAX_BUFFER)
+    replay_buffer = deque(maxlen=max_buffer)
 
     # Initialising the model
     n_actions = int(env.action_space.n)
-    space_shape = downscale(observation, 2).shape
-    target = make_model(space_shape, n_actions, version)
+    target = make_model(
+        np.array([downscale(np.array(frames), 2)])[0], n_actions, version
+    )
     policy = deepcopy(target)
-    steps_to_synchronize = 200
 
     # Variables to perform analysis
     stats = Stats([], [], [])
@@ -220,7 +224,7 @@ def train(
     episode = 1
 
     # Training
-    for _ in tqdm(range(MAX_FRAMES)):
+    for _ in tqdm(range(max_frames)):
         step_count += 1
         steps_survived += 1
 
@@ -239,15 +243,13 @@ def train(
             steps_survived = 0
             episode += 1
             observation, info = env.reset(seed=seed)
-            frames, next_frames = init_stacked_frames(observation, STACKED_FRAMES)
+            frames, next_frames = init_stacked_frames(observation, stacked_frames)
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
             train_batch(policy, target, replay_buffer, batch_size, gamma)
-
         if step_count % steps_to_synchronize == 0:
             synchronize_model(policy, target)
-
         if debug:
             visualize(frames)
 
