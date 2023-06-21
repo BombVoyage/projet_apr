@@ -5,6 +5,7 @@ import csv
 import gymnasium as gym
 import numpy as np
 import pandas as pd
+from copy import deepcopy
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow import keras
@@ -15,8 +16,8 @@ from dataclasses import dataclass
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 10000  # total training frames
-MAX_BUFFER = 500  # size of replay buffer
+MAX_FRAMES = 50000  # total training frames
+MAX_BUFFER = 5000  # size of replay buffer
 STEPS_TO_UPDATE = 1000  # steps between target updates
 
 # Configuration paramaters for the whole setup
@@ -100,7 +101,7 @@ def train(name: str, version: int = 2, render: bool = False):
     epsilon = 1.0  # Epsilon greedy parameter
     exploration_frames = MAX_FRAMES / 10
     epsilon_decay = 0.9 / exploration_frames
-    batch_size = 4
+    batch_size = 32
     steps_to_update = 4
     step_count = 0
     replay_buffer = deque(maxlen=MAX_BUFFER)
@@ -109,7 +110,7 @@ def train(name: str, version: int = 2, render: bool = False):
     n_actions = int(env.action_space.n)
     space_shape = downscale(observation, 2).shape
     target = make_model(space_shape, n_actions, version)
-    policy = make_model(space_shape, n_actions, version)
+    policy = deepcopy(target)
     steps_to_synchronize = 200
 
     # Variables to perform analysis
@@ -169,16 +170,16 @@ def train(name: str, version: int = 2, render: bool = False):
             loss_fn = keras.losses.Huber()
             mask = tf.one_hot(actions, n_actions)
             with tf.GradientTape() as tape:
-                raw_q_values = target(observations)
+                raw_q_values = policy(observations)
                 q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
                 loss = tf.reduce_mean(
                     loss_fn(target_q_values.astype("float32"), q_values)
                 )
-            grads = tape.gradient(loss, target.trainable_variables)
-            optimizer.apply_gradients(zip(grads, target.trainable_variables))
+            grads = tape.gradient(loss, policy.trainable_variables)
+            optimizer.apply_gradients(zip(grads, policy.trainable_variables))
 
         if step_count % steps_to_synchronize == 0:
-            policy.set_weights(target.get_weights())
+            target.set_weights(policy.get_weights())
 
         epsilon -= epsilon_decay
     save(policy, name, version)
@@ -204,7 +205,7 @@ def test(name: str, version: int):
 if __name__ == "__main__":
     # plot_stats("space_invaders", 2)
     train("space_invaders", 2, render="human")
-    # test("space_invaders", 2)
+    # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
     # env.seed(42)
