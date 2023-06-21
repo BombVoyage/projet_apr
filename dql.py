@@ -71,6 +71,10 @@ def save_stats(stats: Stats, name, version):
         write.writerows(np.array(list(stats.__dict__.values())).T)
 
 
+def save_checkpoint(model, name: str, version: int):
+    model.save_weights(f"{SAVE_PATH}/{name}_v{version}/checkpoint/checkpoint")
+
+
 def plot_stats(name: str, version: int):
     df = pd.read_csv(f"./models/{name}_v{version}/stats.csv")
     fig, ax = plt.subplots(2)
@@ -178,7 +182,8 @@ def train(
     exploration_time: int = 1 / 10,
     batch_size: int = 32,
     steps_to_update: int = 4,
-    steps_to_synchronize=200,
+    steps_to_synchronize: int = 200,
+    steps_to_checkpoint: int = 10000,
     debug: bool = False,
 ):
     """
@@ -197,6 +202,7 @@ def train(
         batch_size -- Size of experience replay batch.
         steps_to_update -- Number of steps between batch training.
         steps_to_synchronize -- Number of steps between model synchronization.
+        steps_to_checkpoint -- Number of steps between model checkpoints.
         debug -- Visual debugging.
     """
 
@@ -254,6 +260,8 @@ def train(
             train_batch(policy, target, replay_buffer, batch_size, gamma)
         if step_count % steps_to_synchronize == 0:
             synchronize_model(policy, target)
+        if step_count % steps_to_checkpoint == 0:
+            save_checkpoint(policy, name, version)
         if debug:
             visualize(frames)
 
