@@ -13,6 +13,7 @@ from tensorflow.keras import layers
 from tqdm import tqdm
 from collections import deque
 from dataclasses import dataclass
+from typing import Optional
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
@@ -186,25 +187,47 @@ def train(name: str, version: int = 2, render: bool = False):
     save_stats(stats, name, version)
 
 
-def test(name: str, version: int):
+def test(name: str, version: Optional[int] = None, episodes: int = -1, render=True):
     def quit(env, sig, frame):
         env.close()
         sys.exit(0)
 
-    env = gym.make(GAMES[name], obs_type="rgb", render_mode="human")
-    model = load(f"{name}_v{version}")
+    env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
+    model = load(f"{name}_v{version}") if version is not None else None
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
-    while True:
+
+    score = 0
+    i = 0
+    while i != episodes:
+        i += 1
         observation, _ = env.reset()
         terminated = False
         while not terminated:
-            action = np.argmax(model(np.array([downscale(observation, 2)])))
+            if model is not None:
+                action = np.argmax(model(np.array([downscale(observation, 2)])))
+            else:
+                action = np.random.randint(env.action_space.n)
             observation, reward, terminated, truncated, info = env.step(action)
+            score += reward
+    return score
+
+
+def compare(
+    episodes: int,
+    name: str,
+    player_1: int,
+    player_2: Optional[int] = None,
+    render=False,
+):
+    score_1 = test(name, player_1, episodes, render)
+    score_2 = test(name, player_2, episodes, render)
+    print(f"Player 1: {score_1}\tPlayer 2: {score_2}")
 
 
 if __name__ == "__main__":
+    compare(25, "space_invaders", 1)
     # plot_stats("space_invaders", 2)
-    train("space_invaders", 2, render="human")
+    # train("space_invaders", 2, render="human")
     # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
