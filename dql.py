@@ -11,7 +11,7 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tqdm import tqdm
 from collections import deque
-from dataclasses import dataclass, astuple
+from dataclasses import dataclass
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
@@ -162,14 +162,20 @@ def train(name: str, version: int = 2, render: bool = False):
             next_observations = np.array(
                 [downscale(next_obs, 2) for next_obs in next_observations]
             )
-            update_q_values = target(observations).numpy()
-            next_q_values = np.max(target(next_observations).numpy(), axis=1)
-            is_terminated = [1 if t else 0 for t in is_terminated]
-            for i in range(len(update_q_values)):
-                update_q_values[i, actions[i]] = (
-                    rewards[i] + is_terminated[i] * next_q_values[i] * gamma
+            max_next_q_values = np.max(target(next_observations).numpy(), axis=1)
+            target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
+
+            optimizer = keras.optimizers.Adam(learning_rate=0.001)
+            loss_fn = keras.losses.Huber()
+            mask = tf.one_hot(actions, n_actions)
+            with tf.GradientTape() as tape:
+                raw_q_values = target(observations)
+                q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
+                loss = tf.reduce_mean(
+                    loss_fn(target_q_values.astype("float32"), q_values)
                 )
-            target.fit(observations, np.array(update_q_values))
+            grads = tape.gradient(loss, target.trainable_variables)
+            optimizer.apply_gradients(zip(grads, target.trainable_variables))
 
         if step_count % steps_to_synchronize == 0:
             policy.set_weights(target.get_weights())
@@ -196,9 +202,9 @@ def test(name: str, version: int):
 
 
 if __name__ == "__main__":
-    # plot_stats("space_invaders", 1)
-    # train("space_invaders", 2)
-    test("space_invaders", 2)
+    # plot_stats("space_invaders", 2)
+    train("space_invaders", 2, render="human")
+    # test("space_invaders", 2)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
     # env.seed(42)
