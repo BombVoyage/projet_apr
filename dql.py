@@ -79,8 +79,8 @@ def save_checkpoint(model, name: str, version: int):
 def plot_stats(name: str, version: int):
     df = pd.read_csv(f"./models/{name}_v{version}/stats.csv")
     fig, ax = plt.subplots(2)
-    ax[0].plot(df.episode, df.score)
-    ax[1].plot(df.episode, df.steps_survived)
+    ax[0].plot(df.episodes, df.scores)
+    ax[1].plot(df.episodes, df.steps_survived)
     plt.show()
 
 
@@ -154,10 +154,12 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
     return action
 
 
-def init_stacked_frames(observation: np.ndarray, max_frames, to_process: bool = True):
+def init_stacked_frames(
+    observation: np.ndarray, stacked_frames, to_process: bool = True
+):
     """Create the initial stacked frames."""
-    frames = deque(maxlen=max_frames)
-    for _ in range(max_frames):
+    frames = deque(maxlen=stacked_frames)
+    for _ in range(stacked_frames):
         if to_process:
             frames.append(preprocess(observation))
         else:
@@ -168,14 +170,12 @@ def init_stacked_frames(observation: np.ndarray, max_frames, to_process: bool = 
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
     n_frames = len(frames)
-    fig, ax = plt.subplots(2, n_frames, figsize=(15, 15))
+    fig, ax = plt.subplots(n_frames, figsize=(15, 15))
     for j in range(n_frames):
-        ax[0][j].imshow(frames[j])
-        ax[0][j].axis("off")
-    for j in range(n_frames):
-        ax[1][j].imshow(preprocess(frames[j], 2), cmap="gray")
-        ax[1][j].axis("off")
+        ax[j].imshow(frames[j], cmap='gray')
+        ax[j].axis("off")
     plt.savefig("./current_frame.png")
+    plt.close()
 
 
 def train(
@@ -279,7 +279,13 @@ def train(
     save_stats(stats, name, version)
 
 
-def test(name: str, version: Optional[int] = None, episodes: int = -1, render=True):
+def test(
+    name: str,
+    version: Optional[int] = None,
+    episodes: int = -1,
+    render=True,
+    stacked_frames: int = 4,
+):
     def quit(env, sig, frame):
         env.close()
         sys.exit(0)
@@ -293,13 +299,16 @@ def test(name: str, version: Optional[int] = None, episodes: int = -1, render=Tr
     while i != episodes:
         i += 1
         observation, _ = env.reset()
+        frames = init_stacked_frames(observation, stacked_frames)
         terminated = False
         while not terminated:
             if model is not None:
-                action = np.argmax(model(preprocess(observation, 2)))
+                action = np.argmax(model(np.array([frames], dtype="float32")))
             else:
                 action = np.random.randint(env.action_space.n)
+            print(action)
             observation, reward, terminated, truncated, info = env.step(action)
+            frames.append(preprocess(observation))
             score += reward
     return score
 
@@ -319,8 +328,8 @@ def compare(
 
 if __name__ == "__main__":
     # compare(25, "space_invaders", 1)
-    # plot_stats("space_invaders", 2)
-    train("space_invaders", 2, render=False, debug=False)
+    # plot_stats("space_invaders", 3)
+    train("space_invaders", 2, render=True, debug=False)
     # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
