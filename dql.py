@@ -109,7 +109,7 @@ def preprocess(img, downscale_factor: float = 2):
 def train_batch(policy, target, buffer, batch_size, gamma):
     """Trains a single batch of experiences from the buffer."""
     batch = random.sample(list(buffer), batch_size)
-    frames = np.array([b[0] for b in batch])
+    frames = np.array([merge_frames(b[0]) for b in batch])
     actions = np.array([b[1] for b in batch])
     rewards = np.array([b[2] for b in batch])
     next_observations = np.array([b[3] for b in batch])
@@ -117,7 +117,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
 
     next_frames = np.array(
         [
-            np.concatenate((frames[i][1:], np.array([next_observations[i]])))
+            np.concatenate((frames[i][:,:,1:], next_observations[i]), axis=2)
             for i in range(batch_size)
         ]
     )
@@ -151,11 +151,12 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
     else:
         # Select action with highest q-value
         action = np.argmax(q_values)
+        print(f'\nMeilleure action: {action}')
     return action
 
 
 def init_stacked_frames(
-    observation: np.ndarray, stacked_frames, to_process: bool = True
+    observation: np.ndarray, stacked_frames, to_process: bool = False
 ):
     """Create the initial stacked frames."""
     frames = deque(maxlen=stacked_frames)
@@ -167,13 +168,19 @@ def init_stacked_frames(
     return frames
 
 
+def merge_frames(frames):
+    frames = np.array(frames)
+    if len(frames.shape)==4:
+        return np.concatenate(tuple(frames), axis=2)
+    elif len(frames.shape)==5:
+        return np.array([merge_frames(f) for f in frames])
+
+
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
-    n_frames = len(frames)
-    fig, ax = plt.subplots(n_frames, figsize=(15, 15))
-    for j in range(n_frames):
-        ax[j].imshow(frames[j], cmap='gray')
-        ax[j].axis("off")
+    fig, ax = plt.subplots(1, figsize=(15, 15))
+    ax.imshow(merge_frames(frames)[0], cmap='gray')
+    ax.axis("off")
     plt.savefig("./current_frame.png")
     plt.close()
 
@@ -222,7 +229,7 @@ def train(
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env.seed(seed)
     observation, info = env.reset(seed=seed)
-    frames = init_stacked_frames(observation, stacked_frames)
+    frames = init_stacked_frames(observation, stacked_frames, to_process=True)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
@@ -232,7 +239,7 @@ def train(
 
     # Initialising the model
     n_actions = int(env.action_space.n)
-    target = make_model(np.array(frames), n_actions, version)
+    target = make_model(merge_frames(frames), n_actions, version)
     policy = deepcopy(target)
 
     # Variables to perform analysis
@@ -246,7 +253,7 @@ def train(
         step_count += 1
         steps_survived += 1
 
-        action = epsilon_greedy(policy, np.array([frames], dtype="float32"), epsilon)
+        action = epsilon_greedy(policy, np.array([merge_frames(frames)]), epsilon)
         next_observation, reward, terminated, truncated, info = env.step(action)
         running_reward += reward
         replay_buffer.append(
@@ -260,7 +267,7 @@ def train(
             steps_survived = 0
             episode += 1
             observation, info = env.reset(seed=seed)
-            frames = init_stacked_frames(observation, stacked_frames)
+            frames = init_stacked_frames(observation, stacked_frames, to_process=True)
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
@@ -299,7 +306,7 @@ def test(
     while i != episodes:
         i += 1
         observation, _ = env.reset()
-        frames = init_stacked_frames(observation, stacked_frames)
+        frames = init_stacked_frames(observation, stacked_frames, to_process=True)
         terminated = False
         while not terminated:
             if model is not None:
