@@ -12,6 +12,7 @@ import cv2
 import pandas as pd
 from matplotlib import pyplot as plt
 import csv
+from skimage import color
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
@@ -77,8 +78,19 @@ def plot_stats(name: str, version: int):
     plt.show()
 
 def downscale(img: np.ndarray, factor: float) -> np.ndarray:
-    y_size, x_size, _ = img.shape
+    y_size, x_size = img.shape
     return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+
+def grayscale(img: np.ndarray):
+    return color.rgb2gray(img)
+    
+def preprocess(img, downscale_factor: float = 2):
+    if len(img.shape) == 3:
+        res = downscale(grayscale(img), downscale_factor)
+        res = res.reshape((*res.shape, 1))
+        return res
+    else:
+        return np.array([preprocess(frame) for frame in img])
 
 def calc_reward_mean(hisory_buffer, center = 13, dist = 8):
     res = 0
@@ -107,9 +119,9 @@ def train(name: str, version: int = 2, render: bool = False):
     nb_buffer = 0
 
     observation, info = env.reset(seed=seed)
-    frames_observation.append(downscale(observation, 2))
+    frames_observation.append(preprocess(observation, 2))
 
-    space_shape = downscale(observation, 2).shape
+    space_shape = preprocess(observation, 2).shape
     model = make_model(space_shape, n_actions, version)
 
     stats = Stats(np.array([0]), np.array([0]), np.array([0]))
@@ -119,7 +131,7 @@ def train(name: str, version: int = 2, render: bool = False):
     for k in range(NB_FRAME-1):
         action = np.random.randint(n_actions)
         next_observation, reward, terminated, truncated, info = env.step(action)
-        frames_observation.append(downscale(next_observation, 2))
+        frames_observation.append(preprocess(next_observation, 2))
         running_reward += reward
         steps_survived += 1
 
@@ -134,7 +146,7 @@ def train(name: str, version: int = 2, render: bool = False):
             action = np.argmax(q_values)
 
         next_observation, reward, terminated, truncated, info = env.step(action)
-        frames_observation.append(downscale(next_observation, 2))
+        frames_observation.append(preprocess(next_observation, 2))
 
         running_reward += reward
         steps_survived += 1
@@ -146,7 +158,7 @@ def train(name: str, version: int = 2, render: bool = False):
 
         if terminated:
             observation, info = env.reset(seed=seed)
-            frames_observation.append(downscale(observation, 2))
+            frames_observation.append(preprocess(observation, 2))
 
             stats.episode = np.append(stats.episode, stats.episode[-1] + 1)
             stats.score = np.append(stats.score, running_reward)
@@ -207,6 +219,6 @@ def test(name: str, version: int):
 
 
 if __name__ == "__main__":
-    test("space_invaders", 2)
-    #train("space_invaders", 2)
+    #test("space_invaders", 2)
+    train("space_invaders", 2)
     #plot_stats("space_invaders", 2)
