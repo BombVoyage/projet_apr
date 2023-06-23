@@ -347,7 +347,7 @@ def compare(
 if __name__ == "__main__":
     # compare(25, "space_invaders", 2)
     # plot_stats("breakout", 2)
-    train("breakout", 2, render=True, stacked_frames=4, max_frames=50000, debug=True)
+    train("breakout", 2, render=False, stacked_frames=4, max_frames=50000, debug=True)
     # test("breakout", 2)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
