@@ -117,7 +117,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
 
     next_frames = np.array(
         [
-            np.concatenate((frames[i][:,:,1:], next_observations[i]), axis=2)
+            np.concatenate((frames[i][:, :, 1:], next_observations[i]), axis=2)
             for i in range(batch_size)
         ]
     )
@@ -151,7 +151,7 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
     else:
         # Select action with highest q-value
         action = np.argmax(q_values)
-        print(f'\nMeilleure action: {action}')
+        print(f"\nMeilleure action: {action}")
     return action
 
 
@@ -170,16 +170,16 @@ def init_stacked_frames(
 
 def merge_frames(frames):
     frames = np.array(frames)
-    if len(frames.shape)==4:
+    if len(frames.shape) == 4:
         return np.concatenate(tuple(frames), axis=2)
-    elif len(frames.shape)==5:
+    elif len(frames.shape) == 5:
         return np.array([merge_frames(f) for f in frames])
 
 
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
     fig, ax = plt.subplots(1, figsize=(15, 15))
-    ax.imshow(merge_frames(frames)[0], cmap='gray')
+    ax.imshow(merge_frames(frames)[0], cmap="gray")
     ax.axis("off")
     plt.savefig("./current_frame.png")
     plt.close()
@@ -233,8 +233,8 @@ def train(
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
-    epsilon_decay = 0.9 / (exploration_time * max_frames)
-    step_count = 0
+    exploration_frames = exploration_time * max_frames
+    epsilon_decay = 0.9 / exploration_frames
     replay_buffer = deque(maxlen=max_buffer)
 
     # Initialising the model
@@ -249,8 +249,7 @@ def train(
     episode = 1
 
     # Training
-    for _ in tqdm(range(max_frames)):
-        step_count += 1
+    for step_count in tqdm(range(max_frames)):
         steps_survived += 1
 
         action = epsilon_greedy(policy, np.array([merge_frames(frames)]), epsilon)
@@ -279,7 +278,8 @@ def train(
         if debug:
             visualize(frames)
 
-        epsilon -= epsilon_decay
+        if step_count < exploration_frames:
+            epsilon -= epsilon_decay
 
     # Save results
     save(policy, name, version)
@@ -336,7 +336,7 @@ def compare(
 if __name__ == "__main__":
     # compare(25, "space_invaders", 1)
     # plot_stats("space_invaders", 3)
-    train("space_invaders", 2, render=True, debug=False)
+    train("space_invaders", 2, render=False, debug=False)
     # test("space_invaders", 3)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
