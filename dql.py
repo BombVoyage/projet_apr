@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 SAVE_PATH = "./models"
-GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
+GAMES = {"space_invaders": "SpaceInvadersDeterministic-v4", "breakout": "ALE/Breakout-v5"}
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -98,12 +98,21 @@ def grayscale(img: np.ndarray):
 
 
 def preprocess(img, downscale_factor: float = 2):
+    img = np.array(img)
     if len(img.shape) == 3:
         res = downscale(grayscale(img), downscale_factor)
         res = res.reshape((*res.shape, 1))
         return res
     else:
         return np.array([preprocess(frame) for frame in img])
+
+
+def apply_delta(frames):
+    img = frames[..., :3]
+    current_frame_delta = np.maximum(frames[..., 3] - frames[..., :3].mean(axis=-1), 0.)
+    img[..., 0] += current_frame_delta
+    img[..., 2] += current_frame_delta
+    return img
 
 
 def train_batch(policy, target, buffer, batch_size, gamma):
@@ -156,15 +165,12 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
 
 
 def init_stacked_frames(
-    observation: np.ndarray, stacked_frames, to_process: bool = False
+    observation: np.ndarray, stacked_frames
 ):
     """Create the initial stacked frames."""
     frames = deque(maxlen=stacked_frames)
     for _ in range(stacked_frames):
-        if to_process:
-            frames.append(preprocess(observation))
-        else:
-            frames.append(observation)
+        frames.append(observation)
     return frames
 
 
@@ -179,7 +185,9 @@ def merge_frames(frames):
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
     fig, ax = plt.subplots(1, figsize=(15, 15))
-    ax.imshow(merge_frames(frames)[0], cmap="gray")
+    obs = merge_frames(frames)
+    img = apply_delta(obs)
+    ax.imshow(img)
     ax.axis("off")
     plt.savefig("./current_frame.png")
     plt.close()
@@ -229,7 +237,7 @@ def train(
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env.seed(seed)
     observation, info = env.reset(seed=seed)
-    frames = init_stacked_frames(observation, stacked_frames, to_process=True)
+    frames = init_stacked_frames(preprocess(observation), stacked_frames)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
@@ -265,8 +273,9 @@ def train(
             running_reward = 0
             steps_survived = 0
             episode += 1
-            observation, info = env.reset(seed=seed)
-            frames = init_stacked_frames(observation, stacked_frames, to_process=True)
+            env.reset(seed=seed)
+            observation, _, _, _, _ = env.step(1)  # Needed to start some games, like breakout
+            frames = init_stacked_frames(preprocess(observation), stacked_frames)
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
@@ -275,7 +284,7 @@ def train(
             synchronize_model(policy, target)
         if step_count % steps_to_checkpoint == 0:
             save_checkpoint(policy, name, version)
-        if debug:
+        if debug and step_count%50==0:
             visualize(frames)
 
         if step_count < exploration_frames:
@@ -305,15 +314,17 @@ def test(
     i = 0
     while i != episodes:
         i += 1
-        observation, _ = env.reset()
-        frames = init_stacked_frames(observation, stacked_frames, to_process=True)
+        env.reset()
+        observation, _, _, _, _ = env.step(1)  # Needed to start some games, like breakout
+        frames = init_stacked_frames(preprocess(observation), stacked_frames)
+        frames = preprocess(frames)
         terminated = False
         while not terminated:
             if model is not None:
-                action = np.argmax(model(np.array([frames], dtype="float32")))
+                action = np.argmax(model(np.array([merge_frames(frames)])))
+                print(action)
             else:
                 action = np.random.randint(env.action_space.n)
-            print(action)
             observation, reward, terminated, truncated, info = env.step(action)
             frames.append(preprocess(observation))
             score += reward
@@ -334,10 +345,10 @@ def compare(
 
 
 if __name__ == "__main__":
-    # compare(25, "space_invaders", 1)
-    # plot_stats("space_invaders", 3)
-    train("space_invaders", 2, render=False, debug=False)
-    # test("space_invaders", 3)
+    # compare(25, "space_invaders", 2)
+    # plot_stats("breakout", 2)
+    train("breakout", 2, render=True, stacked_frames=4, max_frames=50000, debug=True)
+    # test("breakout", 2)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
     # env.seed(42)
