@@ -16,9 +16,9 @@ from skimage import color
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 50000
+MAX_FRAMES = 20000
 MAX_BUFFER = 30
-NB_FRAME = 3
+NB_FRAME = 4
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -121,8 +121,8 @@ def train(name: str, version: int = 2, render: bool = False):
     observation, info = env.reset(seed=seed)
     frames_observation.append(preprocess(observation, 2))
 
-    space_shape = preprocess(observation, 2).shape
-    model = make_model(space_shape, n_actions, version)
+    #space_shape = preprocess(observation, 2).shape
+    model = make_model(preprocess(observation).shape, n_actions, version)
 
     stats = Stats(np.array([0]), np.array([0]), np.array([0]))
     running_reward = 0
@@ -181,7 +181,8 @@ def train(name: str, version: int = 2, render: bool = False):
 
             model.fit(np.array([observation_temp]), np.array([update_q_values]), verbose=0)
 
-            epsilon -= epsilon_decay
+            if i<exploration_frames:
+                epsilon -= epsilon_decay
 
         if not i%5000:
             save(model, name, version=version)
@@ -207,7 +208,7 @@ def test(name: str, version: int):
 
     while True:
         observation, _ = env.reset()
-        frames_observation.append(downscale(observation, 2))
+        frames_observation.append(preprocess(observation, 2))
         terminated = False
         while not terminated:
             if frames_observation.maxlen == len(frames_observation):
@@ -215,10 +216,10 @@ def test(name: str, version: int):
             else:
                 action = np.random.randint(n_actions)
             observation, reward, terminated, truncated, info = env.step(action)
-            frames_observation.append(downscale(observation, 2))
+            frames_observation.append(preprocess(observation, 2))
 
 
 if __name__ == "__main__":
     #test("space_invaders", 2)
-    train("space_invaders", 2)
-    #plot_stats("space_invaders", 2)
+    #train("space_invaders", 2)
+    plot_stats("space_invaders", 2)
