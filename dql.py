@@ -131,8 +131,10 @@ def train_batch(policy, target, buffer, batch_size, gamma):
             for i in range(batch_size)
         ]
     )
-    next_q_values = target(next_frames).numpy()
-    max_next_q_values = np.max(next_q_values, axis=1)
+    next_q_values = policy(next_frames).numpy()
+    best_next_actions = np.argmax(next_q_values, axis=1)
+    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
+    max_next_q_values = (target(next_frames).numpy()*next_mask).sum(axis=1)
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
     optimizer = keras.optimizers.Adam(learning_rate=0.001)
