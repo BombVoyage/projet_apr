@@ -112,6 +112,7 @@ def apply_delta(frames):
     current_frame_delta = np.maximum(frames[..., 3] - frames[..., :3].mean(axis=-1), 0.)
     img[..., 0] += current_frame_delta
     img[..., 2] += current_frame_delta
+    img = np.clip(img/np.mean(img), 0, 1)
     return img
 
 
@@ -298,6 +299,7 @@ def train(
 def test(
     name: str,
     version: Optional[int] = None,
+    epsilon: float = 0,
     episodes: int = -1,
     render=True,
     stacked_frames: int = 4,
@@ -317,11 +319,10 @@ def test(
         env.reset()
         observation, _, _, _, _ = env.step(1)  # Needed to start some games, like breakout
         frames = init_stacked_frames(preprocess(observation), stacked_frames)
-        frames = preprocess(frames)
         terminated = False
         while not terminated:
             if model is not None:
-                action = np.argmax(model(np.array([merge_frames(frames)])))
+                action = epsilon_greedy(model, np.array([merge_frames(frames)]), epsilon)
                 print(action)
             else:
                 action = np.random.randint(env.action_space.n)
@@ -347,8 +348,8 @@ def compare(
 if __name__ == "__main__":
     # compare(25, "space_invaders", 2)
     # plot_stats("breakout", 2)
-    train("breakout", 2, render=False, stacked_frames=4, max_frames=50000, debug=True)
-    # test("breakout", 2)
+    train("breakout", 2, render=True, stacked_frames=4, max_frames=50000, debug=False)
+    # test("breakout", 2, epsilon=0)
     # import matplotlib.pyplot as plt
     # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
     # env.seed(42)
