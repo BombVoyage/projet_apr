@@ -128,7 +128,6 @@ def apply_delta(frames):
     )
     img[..., 0] += current_frame_delta
     img[..., 2] += current_frame_delta
-    img = np.clip(img / np.mean(img), 0, 1)
     return img
 
 
@@ -363,8 +362,9 @@ def compare(
 
 
 if __name__ == "__main__":
-    name = "space_invaders"
-    # compare(25, "space_invaders", 2)
-    train(name, 3, render=False, stacked_frames=4, max_frames=20000, debug=False)
-    # plot_stats(name, 3)
-    # test(name, 3, epsilon=0.05)
+    name = "pong"
+    version = 2
+    # compare(25, "space_invaders", version)
+    train(name, version, render=False, stacked_frames=4, max_frames=20000, debug=False)
+    # plot_stats(name, version)
+    # test(name, version, epsilon=0.05)
