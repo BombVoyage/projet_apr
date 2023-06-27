@@ -22,6 +22,8 @@ SAVE_PATH = "./models"
 GAMES = {
     "space_invaders": "SpaceInvadersDeterministic-v4",
     "breakout": "ALE/Breakout-v5",
+    "freeway": "ALE/Freeway-v5",
+    "pong": "ALE/Pong-v5",
 }
 
 # Configuration paramaters for the whole setup
