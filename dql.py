@@ -56,6 +56,14 @@ def make_model(sample_input: np.ndarray, n_actions, version=2):
             layer4 = layers.Dense(256, activation="relu")(layer3)
             action = layers.Dense(n_actions, activation="linear")(layer4)
 
+        case 3:
+            layer1 = layers.Conv2D(32, 8, strides=4, activation="relu")(inputs)
+            layer2 = layers.Conv2D(64, 4, strides=2, activation="relu")(layer1)
+            layer3 = layers.Conv2D(64, 3, strides=1, activation="relu")(layer2)
+            layer4 = layers.Flatten()(layer3)
+            layer5 = layers.Dense(512, activation="relu")(layer4)
+            action = layers.Dense(n_actions, activation="linear")(layer5)
+
     model = keras.Model(inputs=inputs, outputs=action)
     return model
 
@@ -348,19 +356,8 @@ def compare(
 
 
 if __name__ == "__main__":
+    name = "space_invaders"
     # compare(25, "space_invaders", 2)
-    # plot_stats("breakout", 2)
-    train("breakout", 2, render=True, stacked_frames=4, max_frames=50000, debug=False)
-    # test("breakout", 2, epsilon=0)
-    # import matplotlib.pyplot as plt
-    # env = gym.make(GAMES["space_invaders"], obs_type="rgb")
-    # env.seed(42)
-    # obs, info = env.reset(seed=42)
-    # space_shape = downscale(obs, 2).shape
-    # fig, ax = plt.subplots(1, 2)
-    # print(space_shape)
-
-    # ax[0].imshow(obs)
-    # res = downscale(obs, 2)
-    # ax[1].imshow(res)
-    # plt.show()
+    train(name, 3, render=False, stacked_frames=4, max_frames=100000, debug=False)
+    # plot_stats(name, 3)
+    # test(name, 3, epsilon=0.05)
