@@ -3,6 +3,7 @@ import sys
 import cv2
 import csv
 import gymnasium as gym
+from gymnasium.wrappers import FrameStack
 import numpy as np
 import pandas as pd
 import random
@@ -18,7 +19,10 @@ from dataclasses import dataclass
 from typing import Optional, List
 
 SAVE_PATH = "./models"
-GAMES = {"space_invaders": "SpaceInvadersDeterministic-v4", "breakout": "ALE/Breakout-v5"}
+GAMES = {
+    "space_invaders": "SpaceInvadersDeterministic-v4",
+    "breakout": "ALE/Breakout-v5",
+}
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -117,39 +121,37 @@ def preprocess(img, downscale_factor: float = 2):
 
 def apply_delta(frames):
     img = frames[..., :3]
-    current_frame_delta = np.maximum(frames[..., 3] - frames[..., :3].mean(axis=-1), 0.)
+    current_frame_delta = np.maximum(
+        frames[..., 3] - frames[..., :3].mean(axis=-1), 0.0
+    )
     img[..., 0] += current_frame_delta
     img[..., 2] += current_frame_delta
-    img = np.clip(img/np.mean(img), 0, 1)
+    img = np.clip(img / np.mean(img), 0, 1)
     return img
 
 
 def train_batch(policy, target, buffer, batch_size, gamma):
     """Trains a single batch of experiences from the buffer."""
     batch = random.sample(list(buffer), batch_size)
-    frames = np.array([merge_frames(b[0]) for b in batch])
+    observations = np.array([merge_frames(b[0], to_preprocess=True) for b in batch])
     actions = np.array([b[1] for b in batch])
     rewards = np.array([b[2] for b in batch])
-    next_observations = np.array([b[3] for b in batch])
+    next_observations = np.array(
+        [merge_frames(b[3], to_preprocess=True) for b in batch]
+    )
     is_terminated = np.array([b[4] for b in batch])
 
-    next_frames = np.array(
-        [
-            np.concatenate((frames[i][:, :, 1:], next_observations[i]), axis=2)
-            for i in range(batch_size)
-        ]
-    )
-    next_q_values = policy(next_frames).numpy()
+    next_q_values = policy(next_observations).numpy()
     best_next_actions = np.argmax(next_q_values, axis=1)
     next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
-    max_next_q_values = (target(next_frames).numpy()*next_mask).sum(axis=1)
+    max_next_q_values = (target(next_observations).numpy() * next_mask).sum(axis=1)
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
     optimizer = keras.optimizers.Adam(learning_rate=0.001)
     loss_fn = keras.losses.Huber()
     mask = tf.one_hot(actions, len(next_q_values[0]))
     with tf.GradientTape() as tape:
-        raw_q_values = policy(frames)
+        raw_q_values = policy(observations)
         q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
         loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
     grads = tape.gradient(loss, policy.trainable_variables)
@@ -163,32 +165,26 @@ def synchronize_model(policy, target):
 
 def epsilon_greedy(policy, state, epsilon: float) -> int:
     """Returns best action following an epsilon-greedy policy."""
-    q_values = policy(state).numpy()
     e = np.random.rand()
     if e <= epsilon:
         # Select random action
-        action = np.random.randint(len(q_values[0]))
+        action = np.random.randint(len(policy.get_weights()[-1]))
     else:
         # Select action with highest q-value
+        q_values = policy(state).numpy()
         action = np.argmax(q_values)
         print(f"\nMeilleure action: {action}")
     return action
 
 
-def init_stacked_frames(
-    observation: np.ndarray, stacked_frames
-):
-    """Create the initial stacked frames."""
-    frames = deque(maxlen=stacked_frames)
-    for _ in range(stacked_frames):
-        frames.append(observation)
-    return frames
+def merge_frames(frames, to_preprocess: bool = False):
+    if to_preprocess:
+        frames = np.array([preprocess(f) for f in frames])
+    else:
+        frames = np.array(frames)
 
-
-def merge_frames(frames):
-    frames = np.array(frames)
     if len(frames.shape) == 4:
-        return np.concatenate(tuple(frames), axis=2)
+        return apply_delta(np.concatenate(tuple(frames), axis=2))
     elif len(frames.shape) == 5:
         return np.array([merge_frames(f) for f in frames])
 
@@ -196,9 +192,8 @@ def merge_frames(frames):
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
     fig, ax = plt.subplots(1, figsize=(15, 15))
-    obs = merge_frames(frames)
-    img = apply_delta(obs)
-    ax.imshow(img)
+    obs = merge_frames(frames, to_preprocess=True)
+    ax.imshow(obs)
     ax.axis("off")
     plt.savefig("./current_frame.png")
     plt.close()
@@ -216,7 +211,7 @@ def train(
     exploration_time: int = 1 / 10,
     batch_size: int = 32,
     steps_to_update: int = 4,
-    steps_to_synchronize: int = 200,
+    steps_to_synchronize: int = 1000,
     steps_to_checkpoint: int = 10000,
     debug: bool = False,
 ):
@@ -246,9 +241,9 @@ def train(
 
     # Creating the environment
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
+    env = FrameStack(env, stacked_frames, lz4_compress=True)
     env.seed(seed)
     observation, info = env.reset(seed=seed)
-    frames = init_stacked_frames(preprocess(observation), stacked_frames)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
@@ -258,7 +253,9 @@ def train(
 
     # Initialising the model
     n_actions = int(env.action_space.n)
-    target = make_model(merge_frames(frames), n_actions, version)
+    target = make_model(
+        merge_frames(observation, to_preprocess=True), n_actions, version
+    )
     policy = deepcopy(target)
 
     # Variables to perform analysis
@@ -271,13 +268,15 @@ def train(
     for step_count in tqdm(range(max_frames)):
         steps_survived += 1
 
-        action = epsilon_greedy(policy, np.array([merge_frames(frames)]), epsilon)
+        action = epsilon_greedy(
+            policy, np.array([merge_frames(observation, to_preprocess=True)]), epsilon
+        )
         next_observation, reward, terminated, truncated, info = env.step(action)
         running_reward += reward
         replay_buffer.append(
-            (np.array(frames), action, reward, preprocess(next_observation), terminated)
+            (observation, action, reward, next_observation, terminated)
         )
-        frames.append(preprocess(next_observation))
+        observation = next_observation
 
         if terminated:
             stats.append(episode, running_reward, steps_survived)
@@ -285,8 +284,9 @@ def train(
             steps_survived = 0
             episode += 1
             env.reset(seed=seed)
-            observation, _, _, _, _ = env.step(1)  # Needed to start some games, like breakout
-            frames = init_stacked_frames(preprocess(observation), stacked_frames)
+            observation, _, _, _, _ = env.step(
+                1
+            )  # Needed to start some games, like breakout
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
@@ -295,8 +295,8 @@ def train(
             synchronize_model(policy, target)
         if step_count % steps_to_checkpoint == 0:
             save_checkpoint(policy, name, version)
-        if debug and step_count%50==0:
-            visualize(frames)
+        if debug and step_count % 50 == 0:
+            visualize(observation)
 
         if step_count < exploration_frames:
             epsilon -= epsilon_decay
@@ -319,6 +319,7 @@ def test(
         sys.exit(0)
 
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
+    env = FrameStack(env, stacked_frames, lz4_compress=True)
     model = load(f"{name}_v{version}") if version is not None else None
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
@@ -327,17 +328,21 @@ def test(
     while i != episodes:
         i += 1
         env.reset()
-        observation, _, _, _, _ = env.step(1)  # Needed to start some games, like breakout
-        frames = init_stacked_frames(preprocess(observation), stacked_frames)
+        observation, _, _, _, _ = env.step(
+            1
+        )  # Needed to start some games, like breakout
         terminated = False
         while not terminated:
             if model is not None:
-                action = epsilon_greedy(model, np.array([merge_frames(frames)]), epsilon)
+                action = epsilon_greedy(
+                    model,
+                    np.array([merge_frames(observation, to_preprocess=True)]),
+                    epsilon,
+                )
                 print(action)
             else:
                 action = np.random.randint(env.action_space.n)
             observation, reward, terminated, truncated, info = env.step(action)
-            frames.append(preprocess(observation))
             score += reward
     return score
 
@@ -358,6 +363,6 @@ def compare(
 if __name__ == "__main__":
     name = "space_invaders"
     # compare(25, "space_invaders", 2)
-    train(name, 3, render=False, stacked_frames=4, max_frames=100000, debug=False)
+    train(name, 3, render=False, stacked_frames=4, max_frames=20000, debug=False)
     # plot_stats(name, 3)
     # test(name, 3, epsilon=0.05)
