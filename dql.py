@@ -26,9 +26,6 @@ GAMES = {
     "pong": "ALE/Pong-v5",
 }
 
-# Configuration paramaters for the whole setup
-seed = 42
-
 
 @dataclass
 class Stats:
@@ -246,8 +243,7 @@ def train(
     # Creating the environment
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env = FrameStack(env, stacked_frames, lz4_compress=True)
-    env.seed(seed)
-    observation, info = env.reset(seed=seed)
+    observation, info = env.reset()
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
