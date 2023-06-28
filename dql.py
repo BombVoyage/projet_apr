@@ -13,6 +13,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 import csv
 from skimage import color
+from gymnasium.wrappers import FrameStack
 
 SAVE_PATH = "./models"
 GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
@@ -30,9 +31,9 @@ class Stats:
     steps_survived: np.ndarray
 
 
-def make_model(input_shape, n_actions, version=2):
+def make_model(sample_input: np.ndarray, n_actions, version=2):
     # Network defined by the Deepmind paper
-    inputs = layers.Input(shape=(NB_FRAME, *input_shape))
+    inputs = layers.Input(shape=sample_input.shape)
 
     match version:
         case 1:
@@ -50,10 +51,16 @@ def make_model(input_shape, n_actions, version=2):
             layer4 = layers.Dense(256, activation="relu")(layer3)
             action = layers.Dense(n_actions, activation="linear")(layer4)
 
+        case 3:
+            layer1 = layers.Conv2D(32, 8, strides=4, activation="relu")(inputs)
+            layer2 = layers.Conv2D(64, 4, strides=2, activation="relu")(layer1)
+            layer3 = layers.Conv2D(64, 3, strides=1, activation="relu")(layer2)
+            layer4 = layers.Flatten()(layer3)
+            layer5 = layers.Dense(512, activation="relu")(layer4)
+            action = layers.Dense(n_actions, activation="linear")(layer5)
+
     model = keras.Model(inputs=inputs, outputs=action)
-    model.compile(
-        keras.optimizers.Adam(learning_rate=0.001), keras.losses.MeanSquaredError()
-    )
+    model.compile(keras.optimizers.Adam(learning_rate=0.001), keras.losses.Huber())
     return model
 
 
@@ -83,8 +90,10 @@ def downscale(img: np.ndarray, factor: float) -> np.ndarray:
 
 def grayscale(img: np.ndarray):
     return color.rgb2gray(img)
-    
+
+
 def preprocess(img, downscale_factor: float = 2):
+    img = np.array(img)
     if len(img.shape) == 3:
         res = downscale(grayscale(img), downscale_factor)
         res = res.reshape((*res.shape, 1))
@@ -92,17 +101,39 @@ def preprocess(img, downscale_factor: float = 2):
     else:
         return np.array([preprocess(frame) for frame in img])
 
+
+def apply_delta(frames):
+    img = frames[..., :3]
+    current_frame_delta = np.maximum(
+        frames[..., 3] - frames[..., :3].mean(axis=-1), 0.0
+    )
+    img[..., 0] += current_frame_delta
+    img[..., 2] += current_frame_delta
+    return img
+
+def merge_frames(frames, to_preprocess: bool = False):
+    if to_preprocess:
+        frames = np.array([preprocess(f) for f in frames])
+    else:
+        frames = np.array(frames)
+
+    if len(frames.shape) == 4:
+        return apply_delta(np.concatenate(tuple(frames), axis=2))
+    elif len(frames.shape) == 5:
+        return np.array([merge_frames(f) for f in frames])
+
 def calc_reward_mean(hisory_buffer, center = 13, dist = 8):
     res = 0
     for i in range(center-dist, center+dist+1):
         res += hisory_buffer[i][2]
     return res/(2*dist+1)
 
-def train(name: str, version: int = 2, render: bool = False):
+def train(name: str, version: int = 2, render: bool = False, stacked_frames: int = 4,):
     def quit(env, sig, frame):
         env.close()
         sys.exit(0)
     env = gym.make(GAMES[name], obs_type="rgb", render_mode='human' if render else None)
+    env = FrameStack(env, stacked_frames, lz4_compress=True)
     env.seed(seed)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
@@ -115,28 +146,30 @@ def train(name: str, version: int = 2, render: bool = False):
     
 
     history_buffer = []
-    frames_observation = deque(maxlen=NB_FRAME)
+    #frames_observation = deque(maxlen=NB_FRAME)
     nb_buffer = 0
 
     observation, info = env.reset(seed=seed)
-    frames_observation.append(preprocess(observation, 2))
+    #frames_observation.append(preprocess(observation, 2))
 
     #space_shape = preprocess(observation, 2).shape
-    model = make_model(preprocess(observation).shape, n_actions, version)
+    model = make_model(
+        merge_frames(observation, to_preprocess=True), n_actions, version
+    )
 
     stats = Stats(np.array([0]), np.array([0]), np.array([0]))
     running_reward = 0
     steps_survived = 0
 
-    for k in range(NB_FRAME-1):
+    """for k in range(NB_FRAME-1):
         action = np.random.randint(n_actions)
         next_observation, reward, terminated, truncated, info = env.step(action)
-        frames_observation.append(preprocess(next_observation, 2))
+        #frames_observation.append(preprocess(next_observation, 2))
         running_reward += reward
-        steps_survived += 1
+        steps_survived += 1"""
 
     for i in tqdm(range(MAX_FRAMES)):
-        q_values = model(np.array([list(frames_observation)]))[0].numpy()
+        q_values = model(np.array([merge_frames(observation, to_preprocess=True)]))[0].numpy()
         e = np.random.rand()
         if e <= epsilon or nb_buffer<=MAX_BUFFER:
             # Select random action
@@ -146,19 +179,19 @@ def train(name: str, version: int = 2, render: bool = False):
             action = np.argmax(q_values)
 
         next_observation, reward, terminated, truncated, info = env.step(action)
-        frames_observation.append(preprocess(next_observation, 2))
+        #frames_observation.append(preprocess(next_observation, 2))
 
         running_reward += reward
         steps_survived += 1
 
 
         # Append history_beffer with new observation
-        history_buffer.append( (frames_observation.copy(), action, reward) )
+        history_buffer.append( (merge_frames(next_observation, to_preprocess=True), action, reward) )
         nb_buffer += 1
 
         if terminated:
             observation, info = env.reset(seed=seed)
-            frames_observation.append(preprocess(observation, 2))
+            #frames_observation.append(preprocess(observation, 2))
 
             stats.episode = np.append(stats.episode, stats.episode[-1] + 1)
             stats.score = np.append(stats.score, running_reward)
@@ -173,7 +206,7 @@ def train(name: str, version: int = 2, render: bool = False):
         if nb_buffer>MAX_BUFFER:
             observation_temp, action_temp, _ = history_buffer.pop(0)
             #####
-            next_q_values = model(np.array([list(frames_observation)]))[0].numpy()
+            next_q_values = model(np.array([merge_frames(observation, to_preprocess=True)]))[0].numpy()
             reward_temp = calc_reward_mean(history_buffer, 14, 9)
             nb_buffer -= 1
             update_q_values = q_values
@@ -221,5 +254,5 @@ def test(name: str, version: int):
 
 if __name__ == "__main__":
     #test("space_invaders", 2)
-    #train("space_invaders", 2)
-    plot_stats("space_invaders", 2)
+    train("space_invaders", 2)
+    #plot_stats("space_invaders", 2)
