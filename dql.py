@@ -230,29 +230,29 @@ def test(name: str, version: int):
         env.close()
         sys.exit(0)
 
-    env = gym.make(GAMES[name], obs_type="rgb", render_mode="human")
+    env = gym.make(GAMES[name], obs_type="rgb", render_mode='human')
+    env = FrameStack(env, 4, lz4_compress=True)
     env.seed(seed)
     model = load(f"{name}_v{version}")
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
-    frames_observation = deque(maxlen=NB_FRAME)
+    #frames_observation = deque(maxlen=NB_FRAME)
 
     n_actions = int(env.action_space.n)
 
     while True:
         observation, _ = env.reset()
-        frames_observation.append(preprocess(observation, 2))
+        #frames_observation.append(preprocess(observation, 2))
         terminated = False
         while not terminated:
-            if frames_observation.maxlen == len(frames_observation):
-                action = np.argmax(model(np.array([list(frames_observation)])))
-            else:
-                action = np.random.randint(n_actions)
+          
+            action = np.argmax(model(np.array([merge_frames(observation, to_preprocess=True)])))
+
             observation, reward, terminated, truncated, info = env.step(action)
-            frames_observation.append(preprocess(observation, 2))
+            #frames_observation.append(preprocess(observation, 2))
 
 
 if __name__ == "__main__":
-    #test("space_invaders", 2)
-    train("space_invaders", 2)
+    test("space_invaders", 2)
+    #train("space_invaders", 2)
     #plot_stats("space_invaders", 2)
