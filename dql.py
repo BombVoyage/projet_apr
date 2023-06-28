@@ -3,6 +3,7 @@ import sys
 import cv2
 import csv
 import gymnasium as gym
+import logging
 from gymnasium.wrappers import FrameStack
 import numpy as np
 import pandas as pd
@@ -130,20 +131,22 @@ def apply_delta(frames):
 
 def train_batch(policy, target, buffer, batch_size, gamma):
     """Trains a single batch of experiences from the buffer."""
-    i = np.random.randint(0, len(buffer)-batch_size)
-    batch = np.array(buffer)[i:i+batch_size]
-    observations = np.array([merge_frames(b[0], to_preprocess=True) for b in batch])
-    actions = np.array([b[1] for b in batch])
-    rewards = np.array([b[2] for b in batch])
-    next_observations = np.array(
-        [merge_frames(b[3], to_preprocess=True) for b in batch]
+    i = np.random.randint(0, len(buffer) - batch_size)
+    observations = np.array(
+        [merge_frames(buffer[i + k][0], to_preprocess=True) for k in range(batch_size)]
     )
-    is_terminated = np.array([b[4] for b in batch])
+    actions = np.array([buffer[i + k][1] for k in range(batch_size)])
+    rewards = np.array([buffer[i + k][2] for k in range(batch_size)])
+    next_observations = np.array(
+        [merge_frames(buffer[i + k][3], to_preprocess=True) for k in range(batch_size)]
+    )
+    is_terminated = np.array([buffer[i + k][4] for k in range(batch_size)])
 
     next_q_values = policy(next_observations).numpy()
     best_next_actions = np.argmax(next_q_values, axis=1)
-    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
-    max_next_q_values = (target(next_observations).numpy() * next_mask).sum(axis=1)
+    max_next_q_values = (target(next_observations).numpy()[best_next_actions]).sum(
+        axis=1
+    )
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
     optimizer = keras.optimizers.Adam(learning_rate=0.001)
@@ -155,6 +158,15 @@ def train_batch(policy, target, buffer, batch_size, gamma):
         loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
     grads = tape.gradient(loss, policy.trainable_variables)
     optimizer.apply_gradients(zip(grads, policy.trainable_variables))
+
+    # Log for debugging
+    logging.info("\n================= BATCH START =================\n")
+    logging.info(f"Next Q\n{max_next_q_values}\n")
+    logging.info(f"Target Q\n{target_q_values}\n")
+    logging.info(f"Rewards\n{rewards}\n")
+    logging.info(f"Terminated\n{1-is_terminated}\n")
+    logging.info(f"Loss\n{loss}\n")
+    logging.info("\n================= BATCH END =================\n")
 
 
 def synchronize_model(policy, target):
@@ -172,8 +184,8 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
         # Select action with highest q-value
         q_values = policy(state).numpy()
         action = np.argmax(q_values)
-        print(f"\nMeilleure action: {action}")
-        print(q_values)
+        logging.info(f"Meilleure action: {action}")
+        logging.info(f"Q Values: {q_values}")
     return action
 
 
@@ -197,7 +209,25 @@ def visualize(frames):
     ax[1].imshow(obs)
     ax[0].axis("off")
     ax[1].axis("off")
-    plt.savefig("./current_frame.png")
+    plt.savefig("./images/current_frame.png")
+    plt.close()
+
+
+def visualize_batch(buffer, batch_size):
+    """Sample and visualize a random batch from the buffer."""
+    i = np.random.randint(0, len(buffer) - batch_size)
+    observations = np.array(
+        [merge_frames(buffer[i + k][0], to_preprocess=True) for k in range(batch_size)]
+    )
+    n = int(np.ceil(batch_size**0.5))
+    fig, ax = plt.subplots(n, n, figsize=(15, 15))
+    for i in range(n * n):
+        ax[i // n][i % n].axis("off")
+    for i, obs in enumerate(observations):
+        ax[i // n][i % n].imshow(obs)
+        ax[i // n][i % n].title.set_text(i)
+    plt.subplots_adjust(wspace=0.01, hspace=0.2)
+    plt.savefig("./images/example_batch.png")
     plt.close()
 
 
@@ -208,7 +238,7 @@ def train(
     max_frames: int = 50000,
     max_buffer: int = 5000,
     stacked_frames: int = 4,
-    gamma: float = 0.9,
+    gamma: float = 0.99,
     epsilon: float = 1.0,
     exploration_time: int = 1 / 10,
     batch_size: int = 32,
@@ -268,7 +298,7 @@ def train(
     episode = 1
 
     # Training
-    for step_count in tqdm(range(max_frames)):
+    for step_count in tqdm(range(1, max_frames)):
         steps_survived += 1
 
         action = epsilon_greedy(
@@ -298,8 +328,11 @@ def train(
             synchronize_model(policy, target)
         if step_count % steps_to_checkpoint == 0:
             save_checkpoint(policy, name, version)
+
         if debug and step_count % 50 == 0:
             visualize(observation)
+        if debug and step_count % (batch_size * 5) == 0:
+            visualize_batch(replay_buffer, batch_size)
 
         if step_count < exploration_frames:
             epsilon -= epsilon_decay
@@ -363,6 +396,7 @@ def compare(
 
 
 if __name__ == "__main__":
+    logging.basicConfig(filename="dql.log", filemode="w", level=logging.INFO)
     name = "pong"
     version = 2
     # compare(25, "space_invaders", version)
