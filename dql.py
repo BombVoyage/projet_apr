@@ -130,55 +130,6 @@ def apply_delta(frames):
     return img
 
 
-def train_batch(policy, target, buffer, batch_size, gamma):
-    """Trains a single batch of experiences from the buffer."""
-    i = np.random.randint(0, len(buffer) - batch_size)
-    observations = np.array(
-        [merge_frames(buffer[i + k][0], to_preprocess=True) for k in range(batch_size)]
-    )
-    actions = np.array([buffer[i + k][1] for k in range(batch_size)])
-    rewards = np.array([buffer[i + k][2] for k in range(batch_size)])
-    next_observations = np.array(
-        [merge_frames(buffer[i + k][3], to_preprocess=True) for k in range(batch_size)]
-    )
-    is_terminated = np.array([buffer[i + k][4] for k in range(batch_size)])
-
-    next_q_values = policy(next_observations).numpy()
-    best_next_actions = np.argmax(next_q_values, axis=1)
-    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
-    max_next_q_values = (target(next_observations).numpy()*next_mask).sum(
-        axis=1
-    )
-    target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
-
-    optimizer = keras.optimizers.Adam(learning_rate=0.001)
-    loss_fn = keras.losses.Huber()
-    mask = tf.one_hot(actions, len(next_q_values[0]))
-    with tf.GradientTape() as tape:
-        raw_q_values = policy(observations)
-        q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
-        loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
-    grads = tape.gradient(loss, policy.trainable_variables)
-    optimizer.apply_gradients(zip(grads, policy.trainable_variables))
-
-    # Log for debugging
-    logging.info(
-        "\n================= BATCH START =================\n"
-        # f"Next Q\n{next_q_values}\n"
-        # f"Best next actions\n{best_next_actions}\n"
-        # f"Intermediate1\n{target(next_observations).numpy()}\n"
-        # f"Intermediate2\n{target(next_observations).numpy()*next_mask}\n"
-        # f"Max next Q\n{max_next_q_values}\n"
-        f"Target Q\n{target_q_values}\n"
-        f"Current Q\n{q_values.numpy().reshape((batch_size,))}\n"
-        # f"Actions\n{actions}\n"
-        f"Rewards\n{rewards}\n"
-        f"Not terminated\n{1-is_terminated}\n"
-        f"Loss\n{loss}"
-        "\n================= BATCH END =================\n"
-    )
-
-
 def synchronize_model(policy, target):
     """Synchronizes weights between policy and target."""
     target.set_weights(policy.get_weights())
@@ -238,6 +189,55 @@ def visualize_batch(buffer, batch_size):
     plt.subplots_adjust(wspace=0.01, hspace=0.2)
     plt.savefig("./images/example_batch.png")
     plt.close()
+
+
+def train_batch(policy, target, buffer, batch_size, gamma):
+    """Trains a single batch of experiences from the buffer."""
+    i = np.random.randint(0, len(buffer) - batch_size)
+    observations = np.array(
+        [merge_frames(buffer[i + k][0], to_preprocess=True) for k in range(batch_size)]
+    )
+    actions = np.array([buffer[i + k][1] for k in range(batch_size)])
+    rewards = np.array([buffer[i + k][2] for k in range(batch_size)])
+    next_observations = np.array(
+        [merge_frames(buffer[i + k][3], to_preprocess=True) for k in range(batch_size)]
+    )
+    is_terminated = np.array([buffer[i + k][4] for k in range(batch_size)])
+
+    next_q_values = policy(next_observations).numpy()
+    best_next_actions = np.argmax(next_q_values, axis=1)
+    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
+    max_next_q_values = (target(next_observations).numpy()*next_mask).sum(
+        axis=1
+    )
+    target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
+
+    optimizer = keras.optimizers.Adam(learning_rate=0.001)
+    loss_fn = keras.losses.Huber()
+    mask = tf.one_hot(actions, len(next_q_values[0]))
+    with tf.GradientTape() as tape:
+        raw_q_values = policy(observations)
+        q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
+        loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
+    grads = tape.gradient(loss, policy.trainable_variables)
+    optimizer.apply_gradients(zip(grads, policy.trainable_variables))
+
+    # Log for debugging
+    logging.info(
+        "\n================= BATCH START =================\n"
+        # f"Next Q\n{next_q_values}\n"
+        # f"Best next actions\n{best_next_actions}\n"
+        # f"Intermediate1\n{target(next_observations).numpy()}\n"
+        # f"Intermediate2\n{target(next_observations).numpy()*next_mask}\n"
+        # f"Max next Q\n{max_next_q_values}\n"
+        f"Target Q\n{target_q_values}\n"
+        f"Current Q\n{q_values.numpy().reshape((batch_size,))}\n"
+        # f"Actions\n{actions}\n"
+        f"Rewards\n{rewards}\n"
+        f"Not terminated\n{1-is_terminated}\n"
+        f"Loss\n{loss}"
+        "\n================= BATCH END =================\n"
+    )
 
 
 def train(
@@ -326,9 +326,7 @@ def train(
             steps_survived = 0
             episode += 1
             env.reset()
-            observation, _, _, _, _ = env.step(
-                1
-            )  # Needed to start some games, like breakout
+            observation, _, _, _, _ = env.step(1)
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
@@ -411,6 +409,7 @@ if __name__ == "__main__":
     parser.add_argument('mode', metavar='mode', type=str, nargs=1, help=f'Mode of use. {modes}')
     parser.add_argument('game', metavar='game', type=str, nargs=1, help='Name of the game.')
     parser.add_argument('version', metavar='version', type=int, nargs=1, help='Version of the neural network.')
+    parser.add_argument('-r', '--render', action='store_true')
     parser.add_argument('-d', '--debug', action='store_true')
     parser.add_argument('-l', '--log', action='store_true')
 
@@ -418,6 +417,7 @@ if __name__ == "__main__":
     mode = args.mode[0].lower()
     name = args.game[0]
     version = args.version[0]
+    render = args.render
     debug = args.debug
 
     if mode in modes and args.log:
@@ -429,7 +429,7 @@ if __name__ == "__main__":
         train(
             name,
             version,
-            render=False,
+            render=render,
             stacked_frames=4,
             batch_size=32,
             max_frames=2000,
