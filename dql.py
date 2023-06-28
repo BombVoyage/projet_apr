@@ -175,6 +175,7 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
         q_values = policy(state).numpy()
         action = np.argmax(q_values)
         print(f"\nMeilleure action: {action}")
+        print(q_values)
     return action
 
 
@@ -192,10 +193,12 @@ def merge_frames(frames, to_preprocess: bool = False):
 
 def visualize(frames):
     """Save a visualization of the current frames given to the model."""
-    fig, ax = plt.subplots(1, figsize=(15, 15))
+    fig, ax = plt.subplots(1, 2, figsize=(15, 15))
     obs = merge_frames(frames, to_preprocess=True)
-    ax.imshow(obs)
-    ax.axis("off")
+    ax[0].imshow(frames[-1])
+    ax[1].imshow(obs)
+    ax[0].axis("off")
+    ax[1].axis("off")
     plt.savefig("./current_frame.png")
     plt.close()
 
@@ -340,7 +343,6 @@ def test(
                     np.array([merge_frames(observation, to_preprocess=True)]),
                     epsilon,
                 )
-                print(action)
             else:
                 action = np.random.randint(env.action_space.n)
             observation, reward, terminated, truncated, info = env.step(action)
@@ -365,6 +367,6 @@ if __name__ == "__main__":
     name = "pong"
     version = 2
     # compare(25, "space_invaders", version)
-    train(name, version, render=False, stacked_frames=4, max_frames=20000, debug=False)
+    # train(name, version, render=False, stacked_frames=4, max_frames=2000, debug=False)
     # plot_stats(name, version)
-    # test(name, version, epsilon=0.05)
+    test(name, version, epsilon=0.05)
