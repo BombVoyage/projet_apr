@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from tqdm import tqdm
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -64,25 +65,24 @@ running_reward = 0
 episode_count = 0
 frame_count = 0
 # Number of frames to take random action and observe output
-epsilon_random_frames = 50000
+epsilon_random_frames = 5000
 # Number of frames for exploration
-epsilon_greedy_frames = 1000000.0
+epsilon_greedy_frames = 50000
 # Maximum replay length
 # Note: The Deepmind paper suggests 1000000 however this causes memory issues
-max_memory_length = 100000
+max_memory_length = 5000
 # Train the model after 4 actions
 update_after_actions = 4
 # How often to update the target network
-update_target_network = 10000
+update_target_network = 1000
 # Using huber loss for stability
 loss_function = keras.losses.Huber()
 
-while True:  # Run until solved
+for _ in tqdm(range(10000)):  # Run until solved
     state = np.array(env.reset())
     episode_reward = 0
-
     for timestep in range(1, max_steps_per_episode):
-        env.render() #Adding this line would show the attempts
+        #env.render() #Adding this line would show the attempts
         # of the agent in a pop up window.
         frame_count += 1
 
@@ -134,7 +134,14 @@ while True:  # Run until solved
 
             # Build the updated Q-values for the sampled future states
             # Use the target model for stability
-            future_rewards = model_target.predict(state_next_sample)
+            future_rewards = model_target.predict(state_next_sample, verbose=False)
+
+            """if frame_count>epsilon_random_frames:
+                print(tf.reduce_max(
+                    future_rewards, axis=1
+                ))
+                print(rewards_sample)"""
+
             # Q value = reward + discount factor * expected future reward
             updated_q_values = rewards_sample + gamma * tf.reduce_max(
                 future_rewards, axis=1
@@ -187,4 +194,5 @@ while True:  # Run until solved
 
     if running_reward > 40:  # Condition to consider the task solved
         print("Solved at episode {}!".format(episode_count))
+        model.save("test_breakout")
         break
