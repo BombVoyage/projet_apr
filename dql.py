@@ -171,6 +171,18 @@ def visualize(frames):
     ax[1].axis("off")
     plt.savefig("./images/current_frame.png")
     plt.close()
+    fig, ax = plt.subplots(1, 4, figsize=(15, 15))
+    obs = merge_frames(frames, to_preprocess=True)
+    ax[0].imshow(obs*np.array([1, 0, 0]))
+    ax[1].imshow(obs*np.array([0, 1, 0]))
+    ax[2].imshow(obs*np.array([0, 0, 1]))
+    ax[3].imshow(obs*np.array([1, 0, 1]))
+    ax[0].axis("off")
+    ax[1].axis("off")
+    ax[2].axis("off")
+    ax[3].axis("off")
+    plt.savefig("./images/current_rgb.png")
+    plt.close()
 
 
 def visualize_batch(buffer, batch_size):
@@ -307,7 +319,7 @@ def train(
     episode = 1
 
     # Training
-    for step_count in tqdm(range(1, max_frames)):
+    for step_count in tqdm(range(1, max_frames+1)):
         steps_survived += 1
 
         action = epsilon_greedy(
@@ -432,7 +444,7 @@ if __name__ == "__main__":
             render=render,
             stacked_frames=4,
             batch_size=32,
-            max_frames=2000,
+            max_frames=20000,
             debug=debug,
         )
     if mode == "test":
