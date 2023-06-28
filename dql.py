@@ -224,7 +224,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     )
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
-    optimizer = keras.optimizers.Adam(learning_rate=0.001)
+    optimizer = keras.optimizers.SGD(learning_rate=0.001)
     loss_fn = keras.losses.Huber()
     mask = tf.one_hot(actions, len(next_q_values[0]))
     with tf.GradientTape() as tape:
