@@ -2,6 +2,7 @@ import signal
 import sys
 import cv2
 import csv
+import argparse
 import gymnasium as gym
 import logging
 from gymnasium.wrappers import FrameStack
@@ -144,7 +145,8 @@ def train_batch(policy, target, buffer, batch_size, gamma):
 
     next_q_values = policy(next_observations).numpy()
     best_next_actions = np.argmax(next_q_values, axis=1)
-    max_next_q_values = (target(next_observations).numpy()[best_next_actions]).sum(
+    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
+    max_next_q_values = (target(next_observations).numpy()*next_mask).sum(
         axis=1
     )
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
@@ -160,13 +162,21 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     optimizer.apply_gradients(zip(grads, policy.trainable_variables))
 
     # Log for debugging
-    logging.info("\n================= BATCH START =================\n")
-    logging.info(f"Next Q\n{max_next_q_values}\n")
-    logging.info(f"Target Q\n{target_q_values}\n")
-    logging.info(f"Rewards\n{rewards}\n")
-    logging.info(f"Terminated\n{1-is_terminated}\n")
-    logging.info(f"Loss\n{loss}\n")
-    logging.info("\n================= BATCH END =================\n")
+    logging.info(
+        "\n================= BATCH START =================\n"
+        # f"Next Q\n{next_q_values}\n"
+        # f"Best next actions\n{best_next_actions}\n"
+        # f"Intermediate1\n{target(next_observations).numpy()}\n"
+        # f"Intermediate2\n{target(next_observations).numpy()*next_mask}\n"
+        # f"Max next Q\n{max_next_q_values}\n"
+        f"Target Q\n{target_q_values}\n"
+        f"Current Q\n{q_values.numpy().reshape((batch_size,))}\n"
+        # f"Actions\n{actions}\n"
+        f"Rewards\n{rewards}\n"
+        f"Not terminated\n{1-is_terminated}\n"
+        f"Loss\n{loss}"
+        "\n================= BATCH END =================\n"
+    )
 
 
 def synchronize_model(policy, target):
@@ -184,8 +194,7 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
         # Select action with highest q-value
         q_values = policy(state).numpy()
         action = np.argmax(q_values)
-        logging.info(f"Meilleure action: {action}")
-        logging.info(f"Q Values: {q_values}")
+        logging.info(f"\nMeilleure action: {action}" f"\nQ Values: {q_values}")
     return action
 
 
@@ -396,10 +405,39 @@ def compare(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(filename="dql.log", filemode="w", level=logging.INFO)
-    name = "pong"
-    version = 2
-    # compare(25, "space_invaders", version)
-    train(name, version, render=False, stacked_frames=4, max_frames=2000, debug=False)
-    # plot_stats(name, version)
-    # test(name, version, epsilon=0.05)
+    modes = ['train', 'test', 'plot', 'compare']
+
+    parser = argparse.ArgumentParser(description='Train and test DQN models on atari games.')
+    parser.add_argument('mode', metavar='mode', type=str, nargs=1, help=f'Mode of use. {modes}')
+    parser.add_argument('game', metavar='game', type=str, nargs=1, help='Name of the game.')
+    parser.add_argument('version', metavar='version', type=int, nargs=1, help='Version of the neural network.')
+    parser.add_argument('-d', '--debug', action='store_true')
+    parser.add_argument('-l', '--log', action='store_true')
+
+    args = parser.parse_args()
+    mode = args.mode[0].lower()
+    name = args.game[0]
+    version = args.version[0]
+    debug = args.debug
+
+    if mode in modes and args.log:
+        logging.basicConfig(filename=f"./logs/dql_{mode}.log", filemode="w", level=logging.INFO)
+    else:
+        print(f"Unrecognized mode {mode}.\n")
+
+    if mode == "train":
+        train(
+            name,
+            version,
+            render=False,
+            stacked_frames=4,
+            batch_size=32,
+            max_frames=2000,
+            debug=debug,
+        )
+    if mode == "test":
+        test(name, version, epsilon=0.05)
+    if mode == "plot":
+        plot_stats(name, version)
+    if mode == "compare":
+        compare(25, name, version)
