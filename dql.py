@@ -130,7 +130,8 @@ def apply_delta(frames):
 
 def train_batch(policy, target, buffer, batch_size, gamma):
     """Trains a single batch of experiences from the buffer."""
-    batch = random.sample(list(buffer), batch_size)
+    i = np.random.randint(0, len(buffer)-batch_size)
+    batch = np.array(buffer)[i:i+batch_size]
     observations = np.array([merge_frames(b[0], to_preprocess=True) for b in batch])
     actions = np.array([b[1] for b in batch])
     rewards = np.array([b[2] for b in batch])
@@ -256,7 +257,9 @@ def train(
     target = make_model(
         merge_frames(observation, to_preprocess=True), n_actions, version
     )
-    policy = deepcopy(target)
+    policy = make_model(
+        merge_frames(observation, to_preprocess=True), n_actions, version
+    )
 
     # Variables to perform analysis
     stats = Stats([], [], [])
@@ -283,7 +286,7 @@ def train(
             running_reward = 0
             steps_survived = 0
             episode += 1
-            env.reset(seed=seed)
+            env.reset()
             observation, _, _, _, _ = env.step(
                 1
             )  # Needed to start some games, like breakout
@@ -363,6 +366,6 @@ if __name__ == "__main__":
     name = "pong"
     version = 2
     # compare(25, "space_invaders", version)
-    # train(name, version, render=False, stacked_frames=4, max_frames=2000, debug=False)
+    train(name, version, render=False, stacked_frames=4, max_frames=2000, debug=False)
     # plot_stats(name, version)
-    test(name, version, epsilon=0.05)
+    # test(name, version, epsilon=0.05)
