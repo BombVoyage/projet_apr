@@ -136,11 +136,11 @@ for _ in tqdm(range(10000)):  # Run until solved
             # Use the target model for stability
             future_rewards = model_target.predict(state_next_sample, verbose=False)
 
-            """if frame_count>epsilon_random_frames:
-                print(tf.reduce_max(
-                    future_rewards, axis=1
-                ))
-                print(rewards_sample)"""
+            #if frame_count>epsilon_random_frames:
+            print(tf.reduce_max(
+                future_rewards, axis=1
+            ))
+            print(rewards_sample)
 
             # Q value = reward + discount factor * expected future reward
             updated_q_values = rewards_sample + gamma * tf.reduce_max(
@@ -172,6 +172,7 @@ for _ in tqdm(range(10000)):  # Run until solved
             # Log details
             template = "running reward: {:.2f} at episode {}, frame count {}"
             print(template.format(running_reward, episode_count, frame_count))
+            model.save("test_breakout", include_optimizer=False)
 
         # Limit the state and reward history
         if len(rewards_history) > max_memory_length:
