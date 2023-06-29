@@ -133,6 +133,7 @@ def apply_delta(frames):
 def synchronize_model(policy, target):
     """Synchronizes weights between policy and target."""
     target.set_weights(policy.get_weights())
+    logging.info("Models synchronized.")
 
 
 def epsilon_greedy(policy, state, epsilon: float) -> int:
@@ -143,7 +144,7 @@ def epsilon_greedy(policy, state, epsilon: float) -> int:
         action = np.random.randint(len(policy.get_weights()[-1]))
     else:
         # Select action with highest q-value
-        q_values = policy(state).numpy()
+        q_values = policy(state, training=False).numpy()
         action = np.argmax(q_values)
         logging.info(f"\nMeilleure action: {action}" f"\nQ Values: {q_values}")
     return action
@@ -216,21 +217,16 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     )
     is_terminated = np.array([buffer[i + k][4] for k in range(batch_size)])
 
-    next_q_values = policy(next_observations).numpy()
-    best_next_actions = np.argmax(next_q_values, axis=1)
-    next_mask = tf.one_hot(best_next_actions, len(next_q_values[0])).numpy()
-    max_next_q_values = (target(next_observations).numpy()*next_mask).sum(
-        axis=1
-    )
+    max_next_q_values = tf.reduce_max(target.predict(next_observations, verbose=False), axis=1)
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
-    optimizer = keras.optimizers.SGD(learning_rate=0.001)
+    optimizer = keras.optimizers.Adam(learning_rate=0.001)
     loss_fn = keras.losses.Huber()
-    mask = tf.one_hot(actions, len(next_q_values[0]))
+    mask = tf.one_hot(actions, len(policy.get_weights()[-1]))
     with tf.GradientTape() as tape:
         raw_q_values = policy(observations)
-        q_values = tf.reduce_sum(raw_q_values * mask, axis=1, keepdims=True)
-        loss = tf.reduce_mean(loss_fn(target_q_values.astype("float32"), q_values))
+        q_values = tf.reduce_sum(tf.multiply(raw_q_values, mask), axis=1)
+        loss = tf.reduce_mean(loss_fn(target_q_values, q_values))
     grads = tape.gradient(loss, policy.trainable_variables)
     optimizer.apply_gradients(zip(grads, policy.trainable_variables))
 
@@ -239,12 +235,10 @@ def train_batch(policy, target, buffer, batch_size, gamma):
         "\n================= BATCH START =================\n"
         # f"Next Q\n{next_q_values}\n"
         # f"Best next actions\n{best_next_actions}\n"
-        # f"Intermediate1\n{target(next_observations).numpy()}\n"
-        # f"Intermediate2\n{target(next_observations).numpy()*next_mask}\n"
-        # f"Max next Q\n{max_next_q_values}\n"
+        f"Max next Q\n{max_next_q_values}\n"
         f"Target Q\n{target_q_values}\n"
         f"Current Q\n{q_values.numpy().reshape((batch_size,))}\n"
-        # f"Actions\n{actions}\n"
+        f"Actions\n{actions}\n"
         f"Rewards\n{rewards}\n"
         f"Not terminated\n{1-is_terminated}\n"
         f"Loss\n{loss}"
@@ -264,7 +258,7 @@ def train(
     exploration_time: int = 1 / 10,
     batch_size: int = 32,
     steps_to_update: int = 4,
-    steps_to_synchronize: int = 1000,
+    steps_to_synchronize: int = 10000,
     steps_to_checkpoint: int = 10000,
     debug: bool = False,
 ):
