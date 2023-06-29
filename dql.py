@@ -5,7 +5,6 @@ import signal
 import sys
 from collections import deque
 from dataclasses import dataclass
-from math import isclose
 from typing import List, Optional
 
 import cv2
@@ -26,6 +25,7 @@ GAMES = {
     "breakout": "ALE/Breakout-v5",
     "freeway": "ALE/Freeway-v5",
     "pong": "ALE/Pong-v5",
+    "pacman": "ALE/Pacman-v5",
 }
 
 
@@ -103,7 +103,8 @@ def load(name: str):
 
 def downscale(img: np.ndarray, factor: float) -> np.ndarray:
     y_size, x_size = img.shape[0], img.shape[1]
-    return cv2.resize(img, dsize=(int(x_size // factor), int(y_size // factor)))
+    new_dim = int(max(x_size // factor, y_size // factor))
+    return cv2.resize(img, dsize=(new_dim, new_dim))
 
 
 def grayscale(img: np.ndarray):
@@ -157,7 +158,7 @@ def merge_frames(frames, to_preprocess: bool = False):
         frames = np.array(frames)
 
     if len(frames.shape) == 4:
-        return apply_delta(np.concatenate(tuple(frames), axis=2))
+        return 1 - apply_delta(np.concatenate(tuple(frames), axis=2))
     elif len(frames.shape) == 5:
         return np.array([merge_frames(f) for f in frames])
 
@@ -174,10 +175,10 @@ def visualize(frames):
     plt.close()
     fig, ax = plt.subplots(1, 4, figsize=(15, 15))
     obs = merge_frames(frames, to_preprocess=True)
-    ax[0].imshow(obs*np.array([1, 0, 0]))
-    ax[1].imshow(obs*np.array([0, 1, 0]))
-    ax[2].imshow(obs*np.array([0, 0, 1]))
-    ax[3].imshow(obs*np.array([1, 0, 1]))
+    ax[0].imshow(obs * np.array([1, 0, 0]))
+    ax[1].imshow(obs * np.array([0, 1, 0]))
+    ax[2].imshow(obs * np.array([0, 0, 1]))
+    ax[3].imshow(obs * np.array([1, 0, 1]))
     ax[0].axis("off")
     ax[1].axis("off")
     ax[2].axis("off")
@@ -217,7 +218,9 @@ def train_batch(policy, target, buffer, batch_size, gamma):
     )
     is_terminated = np.array([buffer[i + k][4] for k in range(batch_size)])
 
-    max_next_q_values = tf.reduce_max(target.predict(next_observations, verbose=False), axis=1)
+    max_next_q_values = tf.reduce_max(
+        target.predict(next_observations, verbose=False), axis=1
+    )
     target_q_values = rewards + (1 - is_terminated) * gamma * max_next_q_values
 
     optimizer = keras.optimizers.Adam(learning_rate=0.001)
@@ -235,7 +238,7 @@ def train_batch(policy, target, buffer, batch_size, gamma):
         "\n================= BATCH START =================\n"
         # f"Next Q\n{next_q_values}\n"
         # f"Best next actions\n{best_next_actions}\n"
-        f"Max next Q\n{max_next_q_values}\n"
+        # f"Max next Q\n{max_next_q_values}\n"
         f"Target Q\n{target_q_values}\n"
         f"Current Q\n{q_values.numpy().reshape((batch_size,))}\n"
         f"Actions\n{actions}\n"
@@ -290,6 +293,7 @@ def train(
     env = gym.make(GAMES[name], obs_type="rgb", render_mode="human" if render else None)
     env = FrameStack(env, stacked_frames, lz4_compress=True)
     observation, info = env.reset()
+    lives = info["lives"]
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
     # Defining the Q-learning parameters
@@ -313,8 +317,11 @@ def train(
     episode = 1
 
     # Training
-    for step_count in tqdm(range(1, max_frames+1)):
+    for step_count in tqdm(range(1, max_frames + 1)):
         steps_survived += 1
+        if info["lives"] != lives:
+            env.step(1)  # Needed to start some games (like breakout)
+            lives = info["lives"]
 
         action = epsilon_greedy(
             policy, np.array([merge_frames(observation, to_preprocess=True)]), epsilon
@@ -331,8 +338,8 @@ def train(
             running_reward = 0
             steps_survived = 0
             episode += 1
-            env.reset()
-            observation, _, _, _, _ = env.step(1)
+            observation, info = env.reset()
+            print(f"Avg score: {np.mean(stats.scores)}")
             continue
 
         if step_count % steps_to_update == 0 and len(replay_buffer) > batch_size:
@@ -374,14 +381,15 @@ def test(
 
     score = 0
     i = 0
+    lives = -1
     while i != episodes:
         i += 1
-        env.reset()
-        observation, _, _, _, _ = env.step(
-            1
-        )  # Needed to start some games, like breakout
+        observation, info = env.reset()
         terminated = False
         while not terminated:
+            if info["lives"] != lives:
+                env.step(1)  # Needed to start some games (like breakout)
+                lives = info["lives"]
             if model is not None:
                 action = epsilon_greedy(
                     model,
@@ -409,15 +417,64 @@ def compare(
 
 
 if __name__ == "__main__":
-    modes = ['train', 'test', 'plot', 'compare']
+    modes = ["train", "test", "plot", "compare"]
+    defaults = {
+        "steps": 100000,
+        "buffer": 5000,
+        "gamma": 0.99,
+        "epsilon": 1.0,
+        "exploration": 1 / 10,
+    }
 
-    parser = argparse.ArgumentParser(description='Train and test DQN models on atari games.')
-    parser.add_argument('mode', metavar='mode', type=str, nargs=1, help=f'Mode of use. {modes}')
-    parser.add_argument('game', metavar='game', type=str, nargs=1, help='Name of the game.')
-    parser.add_argument('version', metavar='version', type=int, nargs=1, help='Version of the neural network.')
-    parser.add_argument('-r', '--render', action='store_true')
-    parser.add_argument('-d', '--debug', action='store_true')
-    parser.add_argument('-l', '--log', action='store_true')
+    parser = argparse.ArgumentParser(
+        description="Train and test DQN models on atari games."
+    )
+    parser.add_argument(
+        "mode", metavar="mode", type=str, nargs=1, help=f"Mode of use. {modes}"
+    )
+    parser.add_argument(
+        "game", metavar="game", type=str, nargs=1, help="Name of the game."
+    )
+    parser.add_argument(
+        "version",
+        metavar="version",
+        type=int,
+        nargs=1,
+        help="Version of the neural network.",
+    )
+    parser.add_argument(
+        "-s",
+        "--steps",
+        type=int,
+        help=f'Total training steps. Default: {defaults["steps"]}',
+    )
+    parser.add_argument(
+        "-b",
+        "--buffer",
+        type=int,
+        help=f'Size of replay buffer. Default: {defaults["buffer"]}',
+    )
+    parser.add_argument(
+        "-g",
+        "--gamma",
+        type=float,
+        help=f'Gamma parameter for Q learning. Default: {defaults["gamma"]}',
+    )
+    parser.add_argument(
+        "-e",
+        "--epsilon",
+        type=float,
+        help=f'Initial parameter for epsilon greedy policy. Default: {defaults["epsilon"]}',
+    )
+    parser.add_argument(
+        "-x",
+        "--exploration",
+        type=float,
+        help=f'Fraction of total steps before epsilon reaches minimum value (0.1). Default: {defaults["exploration"]}',
+    )
+    parser.add_argument("-r", "--render", action="store_true")
+    parser.add_argument("-d", "--debug", action="store_true")
+    parser.add_argument("-l", "--log", action="store_true")
 
     args = parser.parse_args()
     mode = args.mode[0].lower()
@@ -427,7 +484,9 @@ if __name__ == "__main__":
     debug = args.debug
 
     if mode in modes and args.log:
-        logging.basicConfig(filename=f"./logs/dql_{mode}.log", filemode="w", level=logging.INFO)
+        logging.basicConfig(
+            filename=f"./logs/dql_{mode}.log", filemode="w", level=logging.INFO
+        )
     else:
         print(f"Unrecognized mode {mode}.\n")
 
@@ -438,7 +497,11 @@ if __name__ == "__main__":
             render=render,
             stacked_frames=4,
             batch_size=32,
-            max_frames=20000,
+            max_frames=args.steps or defaults["steps"],
+            max_buffer=args.buffer or defaults["buffer"],
+            gamma=args.gamma or defaults["gamma"],
+            epsilon=args.epsilon or defaults["epsilon"],
+            exploration_time=args.exploration or defaults["exploration"],
             debug=debug,
         )
     if mode == "test":
