@@ -16,8 +16,13 @@ from skimage import color
 from gymnasium.wrappers import FrameStack
 
 SAVE_PATH = "./models"
-GAMES = {"space_invaders": "ALE/SpaceInvaders-v5", "breakout": "ALE/Breakout-v5"}
-MAX_FRAMES = 20000
+GAMES = {
+    "space_invaders": "SpaceInvadersDeterministic-v4",
+    "breakout": "ALE/Breakout-v5",
+    "freeway": "ALE/Freeway-v5",
+    "pong": "ALE/Pong-v5",
+}
+MAX_FRAMES = 30000
 MAX_BUFFER = 30
 NB_FRAME = 4
 
@@ -60,12 +65,12 @@ def make_model(sample_input: np.ndarray, n_actions, version=2):
             action = layers.Dense(n_actions, activation="linear")(layer5)
 
     model = keras.Model(inputs=inputs, outputs=action)
-    model.compile(keras.optimizers.Adam(learning_rate=0.001), keras.losses.Huber())
+    model.compile(keras.optimizers.SGD(learning_rate=0.001), keras.losses.Huber())
     return model
 
 
 def save(model, name, version):
-    model.save(f"{SAVE_PATH}/{name}_v{version}")
+    model.save(f"{SAVE_PATH}/{name}_v{version}", include_optimizer=False)
 
 def load(name: str):
     return tf.keras.models.load_model(f"{SAVE_PATH}/{name}")
@@ -137,7 +142,7 @@ def train(name: str, version: int = 2, render: bool = False, stacked_frames: int
     env.seed(seed)
     signal.signal(signal.SIGINT, lambda sig, frame: quit(env, sig, frame))
 
-    gamma = 0.9  # Discount factor for past rewards
+    gamma = 0.99  # Discount factor for past rewards
     epsilon = 1.0  # Epsilon greedy parameter
     exploration_frames = MAX_FRAMES / 10
     epsilon_decay = 0.9 / exploration_frames
@@ -210,14 +215,14 @@ def train(name: str, version: int = 2, render: bool = False, stacked_frames: int
             reward_temp = calc_reward_mean(history_buffer, 14, 9)
             nb_buffer -= 1
             update_q_values = q_values
-            update_q_values[action_temp] = reward_temp + gamma * np.max(next_q_values)
+            update_q_values = reward_temp + (1-terminated)* gamma * np.max(next_q_values)
 
             model.fit(np.array([observation_temp]), np.array([update_q_values]), verbose=0)
 
             if i<exploration_frames:
                 epsilon -= epsilon_decay
 
-        if not i%5000:
+        if not (i+1)%5000:
             save(model, name, version=version)
             save_stats(stats, name, version)
             print("model saved")
@@ -238,17 +243,32 @@ def test(name: str, version: int):
 
     #frames_observation = deque(maxlen=NB_FRAME)
 
+    epsilon = 0.1
+
     n_actions = int(env.action_space.n)
 
     while True:
-        observation, _ = env.reset()
+        env.reset()
+        observation, _, _, _, _ = env.step(
+            1
+        )
         #frames_observation.append(preprocess(observation, 2))
         terminated = False
         while not terminated:
-          
-            action = np.argmax(model(np.array([merge_frames(observation, to_preprocess=True)])))
+            e = np.random.rand()
+            if e <= epsilon:
+                # Select random action
+                action = np.random.randint(n_actions)
+                #print(action)
+            else:
+                # Select action with highest q-value
+                #action = np.argmax(q_values)
+                action = np.argmax(model(np.array([merge_frames(observation, to_preprocess=True)])))
+                if action!=0:
+                    print(action)
 
             observation, reward, terminated, truncated, info = env.step(action)
+            
             #frames_observation.append(preprocess(observation, 2))
 
 
