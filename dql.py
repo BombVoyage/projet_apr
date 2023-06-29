@@ -1,24 +1,24 @@
+import argparse
+import csv
+import logging
 import signal
 import sys
-import cv2
-import csv
-import argparse
-import gymnasium as gym
-import logging
-from gymnasium.wrappers import FrameStack
-import numpy as np
-import pandas as pd
-import random
-from copy import deepcopy
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from skimage import color
-from tqdm import tqdm
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, List
+from math import isclose
+from typing import List, Optional
+
+import cv2
+import gymnasium as gym
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from gymnasium.wrappers import FrameStack
+from skimage import color
+from tensorflow import keras
+from tensorflow.keras import layers
+from tqdm import tqdm
 
 SAVE_PATH = "./models"
 GAMES = {
