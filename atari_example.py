@@ -3,6 +3,9 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+import matplotlib.pyplot as plt
+import logging
+from tqdm import tqdm
 
 # Configuration paramaters for the whole setup
 seed = 42
@@ -24,6 +27,8 @@ env.seed(seed)
 
 num_actions = 4
 
+logging.basicConfig(filename=f"./logs/atari_example.log", filemode="w", level=logging.INFO)
+
 
 def create_q_model():
     # Network defined by the Deepmind paper
@@ -40,6 +45,15 @@ def create_q_model():
     action = layers.Dense(num_actions, activation="linear")(layer5)
 
     return keras.Model(inputs=inputs, outputs=action)
+
+
+def visualize(frames):
+    """Save a visualization of the current frames given to the model."""
+    fig, ax = plt.subplots(1, figsize=(15, 15))
+    ax.imshow(frames)
+    ax.axis("off")
+    plt.savefig("./images/atari_frame.png")
+    plt.close()
 
 
 # The first model makes the predictions for Q-values which are used to
@@ -64,16 +78,16 @@ running_reward = 0
 episode_count = 0
 frame_count = 0
 # Number of frames to take random action and observe output
-epsilon_random_frames = 50000
+epsilon_random_frames = 5000
 # Number of frames for exploration
-epsilon_greedy_frames = 1000000.0
+epsilon_greedy_frames = 100000.0
 # Maximum replay length
 # Note: The Deepmind paper suggests 1000000 however this causes memory issues
-max_memory_length = 100000
+max_memory_length = 10000
 # Train the model after 4 actions
 update_after_actions = 4
 # How often to update the target network
-update_target_network = 10000
+update_target_network = 1000
 # Using huber loss for stability
 loss_function = keras.losses.Huber()
 
@@ -82,7 +96,7 @@ while True:  # Run until solved
     episode_reward = 0
 
     for timestep in range(1, max_steps_per_episode):
-        env.render() #Adding this line would show the attempts
+        # env.render() #Adding this line would show the attempts
         # of the agent in a pop up window.
         frame_count += 1
 
@@ -134,7 +148,7 @@ while True:  # Run until solved
 
             # Build the updated Q-values for the sampled future states
             # Use the target model for stability
-            future_rewards = model_target.predict(state_next_sample)
+            future_rewards = model_target.predict(state_next_sample, verbose=False)
             # Q value = reward + discount factor * expected future reward
             updated_q_values = rewards_sample + gamma * tf.reduce_max(
                 future_rewards, axis=1
@@ -159,12 +173,26 @@ while True:  # Run until solved
             grads = tape.gradient(loss, model.trainable_variables)
             optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
+            logging.info(
+                "\n================= BATCH START =================\n"
+                f"Target Q\n{updated_q_values}\n"
+                f"Current Q\n{q_action.numpy().reshape((batch_size,))}\n"
+                f"Actions\n{action_sample}\n"
+                f"Rewards\n{rewards_sample}\n"
+                f"Not terminated\n{1-done_sample}\n"
+                f"Loss\n{loss}"
+                "\n================= BATCH END =================\n"
+            )
+
         if frame_count % update_target_network == 0:
             # update the the target network with new weights
             model_target.set_weights(model.get_weights())
             # Log details
             template = "running reward: {:.2f} at episode {}, frame count {}"
             print(template.format(running_reward, episode_count, frame_count))
+
+        if frame_count % 50 == 0:
+            visualize(state)
 
         # Limit the state and reward history
         if len(rewards_history) > max_memory_length:
@@ -182,6 +210,7 @@ while True:  # Run until solved
     if len(episode_reward_history) > 100:
         del episode_reward_history[:1]
     running_reward = np.mean(episode_reward_history)
+    print(f"Avg reward: {running_reward}")
 
     episode_count += 1
 
